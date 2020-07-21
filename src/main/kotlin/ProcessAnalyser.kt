@@ -1,16 +1,17 @@
 @file:Suppress("JAVA_MODULE_DOES_NOT_EXPORT_PACKAGE")
 
-import javafx.beans.property.SimpleObjectProperty
-import javafx.collections.FXCollections
-import javafx.scene.control.Alert
-import sun.jvmstat.monitor.MonitoredHost
-import sun.jvmstat.monitor.MonitoredVm
-import sun.jvmstat.monitor.MonitoredVmUtil
-import sun.jvmstat.monitor.VmIdentifier
+import javafx.beans.property.*
+import javafx.collections.*
+import javafx.scene.control.*
+import javafx.scene.layout.*
+import sun.jvmstat.monitor.*
 import tornadofx.*
 import java.util.*
 import kotlin.error
 
+fun main(args: Array<String>) {
+    launch<Client>(args)
+}
 
 /**
  * Сканирует все java-процессы, возвращает все, кроме процесса профайлера
@@ -46,14 +47,18 @@ class ProcessAnalyserView : View("Profiler") {
     override val root = vbox {
         listview(controller.values) {
             bindSelected(selectedProcessInfo)
+            setPrefSize(667.0, 376.0)
+            vgrow = Priority.ALWAYS
         }
-        button("Get start time") {
-            enableWhen { selectedProcessInfo.isNotNull }
-            action {
-                val obj = selectedProcessInfo.value
-                alert(Alert.AlertType.INFORMATION,
-                        "Process start time",
-                        Date(getProcessStartTime(obj.pid)).toString())
+        hbox {
+            button("Get start time") {
+                enableWhen { selectedProcessInfo.isNotNull }
+                action {
+                    val obj = selectedProcessInfo.value
+                    alert(Alert.AlertType.INFORMATION,
+                            "Process start time",
+                            Date(getProcessStartTime(obj.pid)).toString())
+                }
             }
         }
     }
@@ -71,7 +76,3 @@ data class ProcessInfo(val pid: Long, val mainClass: String, val mainArgs: Strin
 }
 
 class Client : App(ProcessAnalyserView::class)
-
-fun main(args: Array<String>) {
-    launch<Client>(args)
-}
