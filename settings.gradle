@@ -1,2 +1,3 @@
 rootProject.name = 'jit-profiler'
+include 'jitwatch'
 
