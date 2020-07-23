@@ -50,6 +50,8 @@ public class JITDataModel implements IReadOnlyJITDataModel
 
 	private Map<String, CompilerThread> compilerThreads = new HashMap<>();
 
+	private List<DeoptimizationEvent> deoptimizationEvents = new ArrayList<>();
+
 	private Tag endOfLog;
 
 	private int jdkMajorVersion;
@@ -408,5 +410,18 @@ public class JITDataModel implements IReadOnlyJITDataModel
 	public void setBaseTimestamp(long baseTimestamp)
 	{
 		this.baseTimestamp = baseTimestamp;
+	}
+
+	public void addDeoptimizationEvent(DeoptimizationEvent deoptimizationEvent)
+	{
+		deoptimizationEvents.add(deoptimizationEvent);
+	}
+
+	public List<DeoptimizationEvent> getDeoptimizationEvents()
+	{
+		synchronized (deoptimizationEvents)
+		{
+			return new ArrayList<>(deoptimizationEvents);
+		}
 	}
 }

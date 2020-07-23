@@ -5,62 +5,27 @@
  */
 package org.adoptopenjdk.jitwatch.parser.hotspot;
 
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.ATTR_NAME;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.ATTR_THREAD;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.C_AT;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.C_OPEN_ANGLE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.C_OPEN_SQUARE_BRACKET;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.DEBUG_LOGGING;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.DEBUG_LOGGING_ASSEMBLY;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.LOADED;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.SKIP_BODY_TAGS;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.SKIP_HEADER_TAGS;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.S_AT;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.S_FILE_COLON;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.S_OPEN_ANGLE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.S_SLASH;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.S_SPACE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_CLOSE_CDATA;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_CODE_CACHE_FULL;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_COMMAND;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_HOTSPOT_LOG_DONE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_NMETHOD;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_OPEN_CDATA;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_OPEN_CLOSE_CDATA;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_PRINT_NMETHOD;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_RELEASE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_START_COMPILE_THREAD;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_SWEEPER;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_TASK;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_TASK_QUEUED;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_TTY;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_VM_ARGUMENTS;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_VM_VERSION;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_WRITER;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_XML;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_HOTSPOT_LOG;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.ATTR_TIME_MS;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import org.adoptopenjdk.jitwatch.core.IJITListener;
+import org.adoptopenjdk.jitwatch.model.*;
 import org.adoptopenjdk.jitwatch.model.CodeCacheEvent.CodeCacheEventType;
-import org.adoptopenjdk.jitwatch.model.NumberedLine;
-import org.adoptopenjdk.jitwatch.model.Tag;
-import org.adoptopenjdk.jitwatch.model.Task;
 import org.adoptopenjdk.jitwatch.model.assembly.AssemblyProcessor;
 import org.adoptopenjdk.jitwatch.parser.AbstractLogParser;
 import org.adoptopenjdk.jitwatch.util.ParseUtil;
 import org.adoptopenjdk.jitwatch.util.StringUtil;
 import org.adoptopenjdk.jitwatch.util.VmVersionDetector;
+
+import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.*;
 
 public class HotSpotLogParser extends AbstractLogParser
 {
@@ -144,6 +109,11 @@ public class HotSpotLogParser extends AbstractLogParser
 
         for (NumberedLine numberedLine : splitLog.getCompilationLines())
         {
+            if (numberedLine.getLineNumber() == 275348)
+            {
+                int l = 1;
+                System.out.println(numberedLine);
+            }
             if (!skipLine(numberedLine.getLine(), SKIP_BODY_TAGS))
             {
                 Tag tag = tagProcessor.processLine(numberedLine.getLine());
@@ -385,6 +355,10 @@ public class HotSpotLogParser extends AbstractLogParser
             handleTagVmArguments(tag);
             break;
 
+        case TAG_UNCOMMON_TRAP:
+            handleUncommonTrapTag(tag);
+            break;
+
         default:
             break;
         }
@@ -432,6 +406,35 @@ public class HotSpotLogParser extends AbstractLogParser
         {
             currentCompilerThread = model.createCompilerThread(threadId, threadName);
         }
+    }
+
+    protected void handleUncommonTrapTag(Tag tag)
+    {
+        Map<String, String> tagAttributes = tag.getAttributes();
+
+        // process only those uncommon trap tags that describe deoptimization events
+        if (!tagAttributes.containsKey(ATTR_COMPILE_ID))
+        {
+            return;
+        }
+
+        List<Tag> children = tag.getChildren();
+        List<IMetaMember> deoptimizationChain = new ArrayList<>();
+        // reverse the children list due to the deoptimized method being the last one in the list
+        for (int i = children.size() - 1; i >= 0; i--)
+        {
+            Tag child = children.get(i);
+            String attrMethod = child.getAttributes().get(ATTR_METHOD);
+            if (attrMethod != null)
+            {
+                attrMethod = attrMethod.replace(S_SLASH, S_DOT);
+                IMetaMember metaMember = findMemberWithSignature(attrMethod);
+                deoptimizationChain.add(metaMember);
+            }
+        }
+
+        model.addDeoptimizationEvent(new DeoptimizationEvent(ParseUtil.getStamp(tagAttributes),
+                tagAttributes.get(ATTR_COMPILE_ID), tagAttributes, deoptimizationChain, tag.toString()));
     }
 
     private void buildParsedClasspath()
