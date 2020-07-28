@@ -4,9 +4,11 @@ import javafx.geometry.*
 import javafx.scene.control.*
 import javafx.scene.layout.*
 import javafx.scene.text.*
+import javafx.util.*
 import org.adoptopenjdk.jitwatch.chain.*
 import org.adoptopenjdk.jitwatch.model.*
 import tornadofx.*
+
 
 class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): View("Detailed info") {
     private val deoptimizationInfoValues = FXCollections.observableArrayList(getDeoptimizationInfo(jitProfilingInfo))
@@ -15,11 +17,11 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
     override val root = vbox {
         hbox {
             label {
-                text = "Method name: ${jitProfilingInfo.methodName}\n" +
-                        "Total compilation time: ${jitProfilingInfo.totalCompilationTime}\n" +
-                        "Decompilations count: ${jitProfilingInfo.decompilationCount}\n" +
+                text = "Method name: ${jitProfilingInfo.fullMethodName}\n" +
+                        "Total compilation time (ms): ${jitProfilingInfo.totalCompilationTime}\n" +
+                        "Decompilations: ${jitProfilingInfo.decompilationCount}\n" +
                         "Current native size: ${jitProfilingInfo.currentNativeSize}\n" +
-                        "Current bytecode size: ${jitProfilingInfo.currentBytecodeSize}"
+                        "Bytecode size: ${jitProfilingInfo.currentBytecodeSize}"
                 padding = Insets(10.0, 10.0, 10.0, 10.0)
                 minWidth = Text(text).layoutBounds.width + 20.0
             }
@@ -68,13 +70,50 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
                 else
                     null
             }
-            cellFormat {
-                text = if (it.member == null) "Unknown" else it.member.fullyQualifiedMemberName
+            cellFactory = Factory(node)
+        }
+    }
+
+    class Factory(val root: CompileNode): Callback<TreeView<CompileNode>, TreeCell<CompileNode>> {
+        override fun call(param: TreeView<CompileNode>?): TreeCell<CompileNode> {
+            return object : TreeCell<CompileNode>() {
+                override fun updateItem(item: CompileNode?, empty: Boolean) {
+                    super.updateItem(item, empty)
+                    when {
+                        empty -> {
+                            text = null
+                            tooltip = null
+                        }
+                        treeItem.value == root -> {
+                            text = if (item!!.member == null) "Unknown" else item.member.fullyQualifiedMemberName
+                            tooltip = Tooltip("Root node")
+                        }
+                        else -> {
+                            text = if (item!!.member == null) "Unknown" else item.member.fullyQualifiedMemberName
+                            tooltip = Tooltip(item.tooltipText)
+                        }
+                    }
+                }
             }
-            contextMenu = ContextMenu().apply {
-                item("Show detailed info").action {
-                    selectionModel.selectedItem?.let {
-                        information(if (it.value == node) "Root node" else it.value.tooltipText)
+        }
+    }
+
+    fun createCell(tv: TreeView<CompileNode>): TreeCell<CompileNode> {
+        return object : TreeCell<CompileNode>() {
+            override fun updateItem(item: CompileNode, empty: Boolean) {
+                super.updateItem(item, empty)
+                when {
+                    empty -> {
+                        text = null
+                        tooltip = null
+                    }
+                    treeItem === root -> {
+                        text = "Unknown"
+                        tooltip = Tooltip("Root node")
+                    }
+                    else -> {
+                        text = item.member.fullyQualifiedMemberName
+                        tooltip = Tooltip(item.tooltipText)
                     }
                 }
             }
