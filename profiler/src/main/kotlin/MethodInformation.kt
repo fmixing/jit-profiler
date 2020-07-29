@@ -6,13 +6,13 @@ import javafx.scene.layout.*
 import javafx.scene.text.*
 import javafx.util.*
 import org.adoptopenjdk.jitwatch.chain.*
-import org.adoptopenjdk.jitwatch.model.*
 import tornadofx.*
 
 
 class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): View("Detailed info") {
     private val deoptimizationInfoValues = FXCollections.observableArrayList(getDeoptimizationInfo(jitProfilingInfo))
-    private val compileTrees = getCompileTree(jitProfilingInfo)
+    private val compileTrees = jitProfilingInfo.compileTrees
+    private val inlineIntoValues = FXCollections.observableArrayList(jitProfilingInfo.inlinedInto)
 
     override val root = vbox {
         hbox {
@@ -37,23 +37,57 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             }
         }
         vbox {
-            separator {}
-            label {
-                text = "Inlining information"
-                padding = Insets(2.0, 2.0, 2.0, 10.0)
-                val oldFont = font
-                font = Font(oldFont.size + 2)
-            }
-            tabpane {
-                for (node in compileTrees) {
-                    val compilation = node.compilation
-                    tab("#${compilation.index} ${getCompileInfo(compilation)}") {
-                        addChildIfPossible(buildInlineTree(node))
+            createInlinedIntoSection()
+        }
+        vbox {
+            createCompilationsSection()
+        }
+    }
+
+    private fun VBox.createInlinedIntoSection() {
+        separator {}
+        label {
+            text = "Inlined into"
+            padding = Insets(2.0, 2.0, 2.0, 10.0)
+            val oldFont = font
+            font = Font(oldFont.size + 2)
+        }
+        tableview(SimpleListProperty(inlineIntoValues)) {
+            column("Name", InlineIntoInfo::methodNameProperty).remainingWidth()
+            column("Compiler", InlineIntoInfo::compilationProperty)
+            column("Inlined", InlineIntoInfo::inlinedProperty)
+            column("Reason", InlineIntoInfo::reasonProperty)
+            prefHeight = 376.0 / 2
+            hgrow = Priority.ALWAYS
+            vgrow = Priority.ALWAYS
+            contextMenu = ContextMenu().apply {
+                item("Show detailed info").action {
+                    selectedItem?.let {
+                        DetailedMethodInfoView(it.caller).openWindow()
                     }
                 }
-                tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
-                prefHeight = 376.0
             }
+            columnResizePolicy = SmartResize.POLICY
+        }
+    }
+
+    private fun VBox.createCompilationsSection() {
+        separator {}
+        label {
+            text = "Inlining information"
+            padding = Insets(2.0, 2.0, 2.0, 10.0)
+            val oldFont = font
+            font = Font(oldFont.size + 2)
+        }
+        tabpane {
+            for (node in compileTrees) {
+                val compilation = node.compilation
+                tab(compilation.signature) {
+                    add(buildInlineTree(node))
+                }
+            }
+            tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
+            prefHeight = 376.0
         }
     }
 
@@ -85,11 +119,11 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
                             tooltip = null
                         }
                         treeItem.value == root -> {
-                            text = if (item!!.member == null) "Unknown" else item.member.fullyQualifiedMemberName
+                            text = if (item!!.member == null) "Unknown" else getSignature(item.member)
                             tooltip = Tooltip("Root node")
                         }
                         else -> {
-                            text = if (item!!.member == null) "Unknown" else item.member.fullyQualifiedMemberName
+                            text = if (item!!.member == null) "Unknown" else getSignature(item.member)
                             tooltip = Tooltip(item.tooltipText)
                         }
                     }
@@ -97,31 +131,9 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             }
         }
     }
-
-    fun createCell(tv: TreeView<CompileNode>): TreeCell<CompileNode> {
-        return object : TreeCell<CompileNode>() {
-            override fun updateItem(item: CompileNode, empty: Boolean) {
-                super.updateItem(item, empty)
-                when {
-                    empty -> {
-                        text = null
-                        tooltip = null
-                    }
-                    treeItem === root -> {
-                        text = "Unknown"
-                        tooltip = Tooltip("Root node")
-                    }
-                    else -> {
-                        text = item.member.fullyQualifiedMemberName
-                        tooltip = Tooltip(item.tooltipText)
-                    }
-                }
-            }
-        }
-    }
 }
 
-private fun getCompileTree(jitProfilingInfo: JitProfilingInfo): List<CompileNode> {
+fun getCompileTrees(jitProfilingInfo: JitProfilingInfo): List<CompileNode> {
     if (jitProfilingInfo.events.isEmpty()) return emptyList()
 
     val compileChainWalker = CompileChainWalker(jitProfilingInfo.model)
@@ -129,7 +141,7 @@ private fun getCompileTree(jitProfilingInfo: JitProfilingInfo): List<CompileNode
     val compileTrees = ArrayList<CompileNode>()
     for (compilation in compilations) {
         val callTree = compileChainWalker.buildCallTree(compilation)
-        compileTrees += callTree
+        if (callTree != null) compileTrees += callTree
     }
     return compileTrees
 }
@@ -145,15 +157,11 @@ private fun getDeoptimizationInfo(jitProfilingInfo: JitProfilingInfo): List<Deop
         val compileID = compilation.compileID
         val compilationDeoptimizations = deoptimizationEvents.filter { it.compileID == compileID }.toList()
         if (compilationDeoptimizations.isEmpty()) continue
-        val compilerString = getCompileInfo(compilation)
+        val compilerString = compilation.signature
         val index = compilation.index
         deoptimizationInfos.addAll(compilationDeoptimizations.map { DeoptimizationInfo(index, compilerString, it.reason, it.action) })
     }
     return deoptimizationInfos.toList().sortedWith(compareBy { it.compilationIndex } )
-}
-
-private fun getCompileInfo(compilation: Compilation): String {
-    return if (compilation.level != -1) return "${compilation.compiler} (Level ${compilation.level})" else compilation.compiler
 }
 
 data class DeoptimizationInfo(val compilationIndex: Int, val compiler: String, val reason: String, val action: String) {

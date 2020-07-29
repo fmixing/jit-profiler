@@ -1,20 +1,22 @@
-import javafx.beans.binding.*
 import javafx.beans.property.*
 import javafx.collections.*
 import javafx.concurrent.Task
-import javafx.geometry.*
 import javafx.scene.control.*
-import javafx.scene.control.TableView.*
 import javafx.scene.layout.*
 import javafx.scene.text.*
+import org.adoptopenjdk.jitwatch.chain.*
 import org.adoptopenjdk.jitwatch.core.*
+import org.adoptopenjdk.jitwatch.core.JITWatchConstants.*
 import org.adoptopenjdk.jitwatch.model.*
 import org.adoptopenjdk.jitwatch.parser.hotspot.*
 import org.adoptopenjdk.jitwatch.util.*
 import tornadofx.*
 import java.io.*
+import java.util.*
 import java.util.concurrent.Executors.*
-import kotlin.math.*
+import kotlin.collections.ArrayList
+import kotlin.collections.HashMap
+import kotlin.collections.HashSet
 
 
 fun main(args: Array<String>) {
@@ -24,6 +26,7 @@ fun main(args: Array<String>) {
 class Profiler : App(ProfilerView::class)
 
 class ProfilerView : View("Profiler") {
+    private lateinit var profilingInfo: List<JitProfilingInfo>
     private val selectedProcessInfo = SimpleObjectProperty<File>()
     private val values = FXCollections.observableArrayList<JitProfilingInfo>()
     private val selectedMethod = SimpleObjectProperty<JitProfilingInfo>()
@@ -56,28 +59,20 @@ class ProfilerView : View("Profiler") {
                 promptText = "Enter class name"
                 enableWhen { profileCompleted.isNotNull }
                 prefWidth = 400.0
-                textProperty().addListener { obs, old, new ->
-                    val filter = values.filter { it.fullMethodName.startsWith(new) || it.fullMethodName.contains(new) }
-                    this.contextMenu = ContextMenu().apply {
-                        repeat(min(filter.size, 10)) {
-                            item(filter[it].fullMethodName).action {
-                                table.scrollTo(filter[it])
-                                table.selectionModel.select(filter[it])
-                            }
-                        }
-                        show(this@textfield, Side.BOTTOM, 10.0, -5.0)
-                    }
+                textProperty().addListener { _, _, new ->
+                    val filter = profilingInfo.filter { it.fullMethodName.startsWith(new) || it.fullMethodName.contains(new) }
+                    values.setAll(filter)
                 }
             }
         }
         table = createJitProfilingInfoTable()
-        add(table)
     }
 
     private fun loadJitProfilingInfo() {
         val listLoader = object : Task<List<JitProfilingInfo>>() {
             init {
                 setOnSucceeded {
+                    profilingInfo = value
                     values.setAll(value)
                     profilingIndicator.isVisible = false
                     profileCompleted.set(true)
@@ -89,16 +84,22 @@ class ProfilerView : View("Profiler") {
         executor.submit(listLoader)
     }
 
-    private fun createJitProfilingInfoTable(): TableView<JitProfilingInfo> {
+    private fun VBox.createJitProfilingInfoTable(): TableView<JitProfilingInfo> {
         return tableview(values) {
-            column("Method name", JitProfilingInfo::methodNameProperty)
+            column("Method name", JitProfilingInfo::methodNameProperty).remainingWidth()
             column("Total compilation time (ms)", JitProfilingInfo::totalCompilationTimeProperty)
+                    .prefWidth(Text(columns[1].text).layoutBounds.width + 30.0)
             column("Decompilation count", JitProfilingInfo::decompilationCountProperty)
+                    .prefWidth(Text(columns[2].text).layoutBounds.width + 30.0)
             column("Current native size", JitProfilingInfo::currentNativeSizeProperty)
+                    .prefWidth(Text(columns[3].text).layoutBounds.width + 30.0)
+            column("Inlined into count", JitProfilingInfo::inlineIntoCountProperty)
+                    .prefWidth(Text(columns[4].text).layoutBounds.width + 30.0)
             bindSelected(selectedMethod)
             setPrefSize(667.0 * 2, 376.0 * 2)
-            columnResizePolicy = UNCONSTRAINED_RESIZE_POLICY
+            columnResizePolicy = SmartResize.POLICY
             vgrow = Priority.ALWAYS
+            hgrow = Priority.ALWAYS
 
             contextMenu = ContextMenu().apply {
                 item("Show detailed info").action {
@@ -108,40 +109,19 @@ class ProfilerView : View("Profiler") {
                 }
             }
             placeholder = profilingIndicator
-            autoResizeColumn()
         }
-    }
-
-    private fun TableView<JitProfilingInfo>.autoResizeColumn() {
-        // todo: разобраться с изменением ширины колонок
-        items.onChange {
-            val scrollbarWidth = this.lookupAll(".scroll-bar")
-                    .map { it as ScrollBar }
-                    .firstOrNull { bar -> bar.orientation == Orientation.VERTICAL }?.widthProperty()
-            var usedWidth: DoubleBinding = columns[1].widthProperty()
-                    .add(columns[2].widthProperty()).add(columns[3].widthProperty())
-            if (scrollbarWidth != null) usedWidth = usedWidth.add(scrollbarWidth)
-            var freeWidth = this.widthProperty().subtract(usedWidth)
-            if (scrollbarWidth != null) freeWidth = freeWidth.subtract(SimpleDoubleProperty(3.0))
-            columns[0].prefWidthProperty().bind(freeWidth)
-        }
-        columns[1].prefWidth = Text(columns[1].text).layoutBounds.width + 30.0
-        columns[2].prefWidth = Text(columns[2].text).layoutBounds.width + 30.0
-        columns[3].prefWidth = Text(columns[3].text).layoutBounds.width + 30.0
-        columns[1].isResizable = false
-        columns[2].isResizable = false
-        columns[3].isResizable = false
-        val usedWidth: DoubleBinding = columns[1].widthProperty().add(columns[2].widthProperty()).add(columns[3].widthProperty())
-        columns[0].prefWidthProperty().bind(this.widthProperty().subtract(usedWidth))
     }
 }
+
+fun getSignature(member: IMetaMember) = member.fullyQualifiedMemberName + "(" + toString(member.paramTypeNames) + ") " + member.returnTypeName
+fun toString(signature: Array<String>): String = if (signature.isEmpty()) "" else signature.joinToString(separator = ", ")
 
 private fun profile(jitLogFile: String): List<JitProfilingInfo> {
     val model = parseLogFile(jitLogFile)
     val eventListCopy = model.eventListCopy
     val map = HashMap<String, MutableList<JITEvent>>()
     for (event in eventListCopy) {
-        map.getOrPut(event.eventMember.fullyQualifiedMemberName) { ArrayList() }.add(event)
+        map.getOrPut(getSignature(event.eventMember)) { ArrayList() }.add(event)
     }
     return buildTableInfo(map, model)
 }
@@ -172,21 +152,60 @@ private fun loadClassPathFromLogIfNeeded(logParser: HSLPWrapper) {
 
 private fun buildTableInfo(map: HashMap<String, MutableList<JITEvent>>, model: JITDataModel): ArrayList<JitProfilingInfo> {
     val list = ArrayList<JitProfilingInfo>()
+    val nameToInfo = HashMap<String, JitProfilingInfo>()
     for (name in map.keys) {
         val events = map[name]!!
-        if (events.isEmpty()) {
-            list += JitProfilingInfo(name, -1, -1, -1, -1, events, model)
-            continue
+        val jitProfilingInfo = if (events.isEmpty()) {
+            JitProfilingInfo(name, -1, -1, -1, -1, false, events, model)
+        } else {
+            val time = events[0].eventMember.compilations.map { it.compilationDuration }.sum()
+            val nativeSize = events[0].eventMember.lastCompilation?.nativeSize ?: -1
+            val bytecodeSize = events[0].eventMember.lastCompilation?.bytecodeSize ?: -1
+            val decompilationCount = if (events[0].eventMember.lastCompilation != null) {
+                events[0].eventMember.lastCompilation.compiledAttributes["decompiles"]?.toInt() ?: 0
+            } else 0
+            JitProfilingInfo(name, time, decompilationCount, nativeSize, bytecodeSize, events[0].eventMember.isCompiled, events, model)
         }
-        val time = events[0].eventMember.compilations.map { it.compilationDuration }.sum()
-        val nativeSize = events[0].eventMember.lastCompilation?.nativeSize ?: -1
-        val bytecodeSize = events[0].eventMember.lastCompilation?.bytecodeSize ?: -1
-        val decompilationCount = if (events[0].eventMember.lastCompilation != null) {
-            events[0].eventMember.lastCompilation.compiledAttributes["decompiles"]?.toInt() ?: 0
-        } else 0
-        list += JitProfilingInfo(name, time, decompilationCount, nativeSize, bytecodeSize, events, model)
+        if (nameToInfo.containsKey(name)) kotlin.error("Different jitProfilingInfos for the same method name")
+        list += jitProfilingInfo
+        nameToInfo[name] = jitProfilingInfo
     }
+    fillInlinedIntoInfo(map, nameToInfo)
     return list
+}
+
+private fun fillInlinedIntoInfo(map: HashMap<String, MutableList<JITEvent>>, nameToInfo: HashMap<String, JitProfilingInfo>) {
+    val inlinedIntoForMethod = HashMap<String, TreeSet<InlineIntoInfo>>()
+    for (name in map.keys) {
+        val jitProfilingInfo = nameToInfo[name]!!
+        val compileTree = getCompileTrees(jitProfilingInfo)
+        for (tree in compileTree) {
+            val compilation = tree.compilation.signature
+            for (child in tree.children) {
+                if (child == null || child.member == null) continue
+                var sortInlineInto = compareBy<InlineIntoInfo> { it.caller.fullMethodName }
+                sortInlineInto = sortInlineInto.thenBy { it.compilation }
+                val orElse = inlinedIntoForMethod.getOrPut(getSignature(child.member)) { TreeSet(sortInlineInto) }
+                val reason = child.tooltipText?.split(S_NEWLINE)?.filter { it.startsWith("Inlined") }?.map { it.split(", ")[1] }?.first()
+                        ?: "Unknown"
+                orElse += InlineIntoInfo(jitProfilingInfo, compilation, if (child.isInlined) "Yes" else "No", reason)
+            }
+        }
+        jitProfilingInfo.compileTrees = compileTree
+    }
+    for (name in map.keys) {
+        val jitProfilingInfo = nameToInfo[name]!!
+        val orEmpty = inlinedIntoForMethod[name].orEmpty()
+        jitProfilingInfo.inlinedInto = orEmpty.toList()
+        jitProfilingInfo.inlineIntoCountProperty.set(orEmpty.map { if (it.inlined == "Yes") 1 else 0 }.sum())
+    }
+}
+
+data class InlineIntoInfo(val caller: JitProfilingInfo, val compilation: String, val inlined: String, val reason: String) {
+    val methodNameProperty = SimpleStringProperty(caller.fullMethodName)
+    val compilationProperty = SimpleStringProperty(compilation)
+    val inlinedProperty = SimpleStringProperty(inlined)
+    val reasonProperty = SimpleStringProperty(reason)
 }
 
 data class JitProfilingInfo(val fullMethodName: String,
@@ -194,12 +213,16 @@ data class JitProfilingInfo(val fullMethodName: String,
                             val decompilationCount: Int,
                             val currentNativeSize: Int,
                             val currentBytecodeSize: Int,
+                            val compiled: Boolean,
                             val events: List<JITEvent>,
                             val model: JITDataModel) {
     val methodNameProperty = SimpleStringProperty(fullMethodName)
     val totalCompilationTimeProperty = SimpleLongProperty(totalCompilationTime)
     val decompilationCountProperty = SimpleIntegerProperty(decompilationCount)
     val currentNativeSizeProperty = SimpleIntegerProperty(currentNativeSize)
+    val inlineIntoCountProperty = SimpleIntegerProperty(0)
+    lateinit var compileTrees: List<CompileNode>
+    lateinit var inlinedInto: List<InlineIntoInfo>
 }
 
 private class HSLPWrapper(jitListener: IJITListener?) : HotSpotLogParser(jitListener) {
