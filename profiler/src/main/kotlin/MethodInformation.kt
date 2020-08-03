@@ -3,16 +3,19 @@ import javafx.collections.*
 import javafx.geometry.*
 import javafx.scene.control.*
 import javafx.scene.layout.*
+import javafx.scene.paint.*
 import javafx.scene.text.*
 import javafx.util.*
 import org.adoptopenjdk.jitwatch.chain.*
 import tornadofx.*
+import kotlin.math.*
 
 
 class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): View("Detailed info") {
     private val deoptimizationInfoValues = FXCollections.observableArrayList(getDeoptimizationInfo(jitProfilingInfo))
     private val compileTrees = jitProfilingInfo.compileTrees
     private val inlineIntoValues = FXCollections.observableArrayList(jitProfilingInfo.inlinedInto)
+    private val maxLabelWidth = 667.0
 
     override val root = vbox {
         hbox {
@@ -23,51 +26,33 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
                         "Current native size: ${jitProfilingInfo.currentNativeSize}\n" +
                         "Bytecode size: ${jitProfilingInfo.currentBytecodeSize}"
                 padding = Insets(10.0, 10.0, 10.0, 10.0)
-                minWidth = Text(text).layoutBounds.width + 20.0
+                val textWidth = Text(text).layoutBounds.width + 20.0
+                prefWidth = min(maxLabelWidth, textWidth)
+                if (textWidth > prefWidth) {
+                    tooltip = Tooltip(jitProfilingInfo.fullMethodName)
+                }
             }
-            tableview(SimpleListProperty(deoptimizationInfoValues)) {
-                column("# of compilation", DeoptimizationInfo::compilationIndexProperty)
-                column("Compiler", DeoptimizationInfo::compilerProperty)
-                column("Reason", DeoptimizationInfo::reasonProperty)
-                column("Action", DeoptimizationInfo::actionProperty)
-                setPrefSize(667.0, 376.0 / 2)
-                columnResizePolicy = TableView.CONSTRAINED_RESIZE_POLICY
+            vbox {
+                label {
+                    text = "Deoptimizations (uncommon traps)"
+                }
+                tableview(SimpleListProperty(deoptimizationInfoValues)) {
+                    column("# of compilation", DeoptimizationInfo::compilationIndexProperty)
+                    column("Compiler", DeoptimizationInfo::compilerProperty)
+                    column("Reason", DeoptimizationInfo::reasonProperty)
+                    column("Action", DeoptimizationInfo::actionProperty)
+                    setPrefSize(667.0, 376.0 / 2)
+                    columnResizePolicy = TableView.CONSTRAINED_RESIZE_POLICY
+                    hgrow = Priority.ALWAYS
+                    vgrow = Priority.ALWAYS
+                }
+                alignment = Pos.CENTER
                 hgrow = Priority.ALWAYS
                 vgrow = Priority.ALWAYS
             }
         }
         vbox {
-            createInlinedIntoSection()
-        }
-        vbox {
             createCompilationsSection()
-        }
-    }
-
-    private fun VBox.createInlinedIntoSection() {
-        separator {}
-        label {
-            text = "Inlined into"
-            padding = Insets(2.0, 2.0, 2.0, 10.0)
-            val oldFont = font
-            font = Font(oldFont.size + 2)
-        }
-        tableview(SimpleListProperty(inlineIntoValues)) {
-            column("Name", InlineIntoInfo::methodNameProperty).remainingWidth()
-            column("Compiler", InlineIntoInfo::compilationProperty)
-            column("Inlined", InlineIntoInfo::inlinedProperty)
-            column("Reason", InlineIntoInfo::reasonProperty)
-            prefHeight = 376.0 / 2
-            hgrow = Priority.ALWAYS
-            vgrow = Priority.ALWAYS
-            contextMenu = ContextMenu().apply {
-                item("Show detailed info").action {
-                    selectedItem?.let {
-                        DetailedMethodInfoView(it.caller).openWindow()
-                    }
-                }
-            }
-            columnResizePolicy = SmartResize.POLICY
         }
     }
 
@@ -82,12 +67,34 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
         tabpane {
             for (node in compileTrees) {
                 val compilation = node.compilation
-                tab(compilation.signature) {
+                tab(compilation.signature + ", " + compilation.compilationDuration + "ms") {
                     add(buildInlineTree(node))
                 }
             }
+            tab("Inlined into (" + inlineIntoValues.size + ")") {
+                add(createInlinedIntoTabInfo())
+            }
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
             prefHeight = 376.0
+        }
+    }
+
+    private fun createInlinedIntoTabInfo(): TableView<InlineIntoInfo> {
+        return tableview(SimpleListProperty(inlineIntoValues)) {
+            column("Name", InlineIntoInfo::methodNameProperty).remainingWidth()
+            column("Compiler", InlineIntoInfo::compilationProperty)
+            column("Reason", InlineIntoInfo::reasonProperty)
+            prefHeight = 376.0 / 2
+            hgrow = Priority.ALWAYS
+            vgrow = Priority.ALWAYS
+            contextMenu = ContextMenu().apply {
+                item("Show detailed info").action {
+                    selectedItem?.let {
+                        DetailedMethodInfoView(it.caller).openWindow()
+                    }
+                }
+            }
+            columnResizePolicy = SmartResize.POLICY
         }
     }
 

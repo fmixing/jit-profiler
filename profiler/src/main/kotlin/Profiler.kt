@@ -33,7 +33,7 @@ class ProfilerView : View("Profiler") {
     private val profileCompleted = SimpleObjectProperty<Boolean>()
     private lateinit var table: TableView<JitProfilingInfo>
     private lateinit var profilingIndicator: ProgressIndicator
-    private val executor = newSingleThreadExecutor()
+    private val executor = getExecutor()
 
     override val root = vbox {
         hbox {
@@ -60,8 +60,11 @@ class ProfilerView : View("Profiler") {
                 enableWhen { profileCompleted.isNotNull }
                 prefWidth = 400.0
                 textProperty().addListener { _, _, new ->
-                    val filter = profilingInfo.filter { it.fullMethodName.startsWith(new) || it.fullMethodName.contains(new) }
+                    val filter = profilingInfo.filter { it.fullMethodName.toLowerCase().startsWith(new, true)
+                            || it.fullMethodName.toLowerCase().contains(new, true) }
+                    val sortOrder = ArrayList(table.sortOrder)
                     values.setAll(filter)
+                    table.sortOrder.setAll(sortOrder)
                 }
             }
         }
@@ -93,7 +96,7 @@ class ProfilerView : View("Profiler") {
                     .prefWidth(Text(columns[2].text).layoutBounds.width + 30.0)
             column("Current native size", JitProfilingInfo::currentNativeSizeProperty)
                     .prefWidth(Text(columns[3].text).layoutBounds.width + 30.0)
-            column("Inlined into count", JitProfilingInfo::inlineIntoCountProperty)
+            column("Inlined into", JitProfilingInfo::inlineIntoCountProperty)
                     .prefWidth(Text(columns[4].text).layoutBounds.width + 30.0)
             bindSelected(selectedMethod)
             setPrefSize(667.0 * 2, 376.0 * 2)
@@ -111,9 +114,15 @@ class ProfilerView : View("Profiler") {
             placeholder = profilingIndicator
         }
     }
+
+    private fun getExecutor() = newSingleThreadExecutor { r: Runnable? ->
+        val t = Thread(r)
+        t.isDaemon = true
+        t
+    }
 }
 
-fun getSignature(member: IMetaMember) = member.fullyQualifiedMemberName + "(" + toString(member.paramTypeNames) + ") " + member.returnTypeName
+fun getSignature(member: IMetaMember) = member.fullyQualifiedMemberName + "(" + toString(member.paramTypeNames) + ")"
 fun toString(signature: Array<String>): String = if (signature.isEmpty()) "" else signature.joinToString(separator = ", ")
 
 private fun profile(jitLogFile: String): List<JitProfilingInfo> {
@@ -182,13 +191,13 @@ private fun fillInlinedIntoInfo(map: HashMap<String, MutableList<JITEvent>>, nam
         for (tree in compileTree) {
             val compilation = tree.compilation.signature
             for (child in tree.children) {
-                if (child == null || child.member == null) continue
+                if (child == null || child.member == null || !child.isInlined) continue
                 var sortInlineInto = compareBy<InlineIntoInfo> { it.caller.fullMethodName }
                 sortInlineInto = sortInlineInto.thenBy { it.compilation }
                 val orElse = inlinedIntoForMethod.getOrPut(getSignature(child.member)) { TreeSet(sortInlineInto) }
                 val reason = child.tooltipText?.split(S_NEWLINE)?.filter { it.startsWith("Inlined") }?.map { it.split(", ")[1] }?.first()
                         ?: "Unknown"
-                orElse += InlineIntoInfo(jitProfilingInfo, compilation, if (child.isInlined) "Yes" else "No", reason)
+                orElse += InlineIntoInfo(jitProfilingInfo, compilation, reason)
             }
         }
         jitProfilingInfo.compileTrees = compileTree
@@ -197,14 +206,13 @@ private fun fillInlinedIntoInfo(map: HashMap<String, MutableList<JITEvent>>, nam
         val jitProfilingInfo = nameToInfo[name]!!
         val orEmpty = inlinedIntoForMethod[name].orEmpty()
         jitProfilingInfo.inlinedInto = orEmpty.toList()
-        jitProfilingInfo.inlineIntoCountProperty.set(orEmpty.map { if (it.inlined == "Yes") 1 else 0 }.sum())
+        jitProfilingInfo.inlineIntoCountProperty.set(orEmpty.size)
     }
 }
 
-data class InlineIntoInfo(val caller: JitProfilingInfo, val compilation: String, val inlined: String, val reason: String) {
+data class InlineIntoInfo(val caller: JitProfilingInfo, val compilation: String, val reason: String) {
     val methodNameProperty = SimpleStringProperty(caller.fullMethodName)
     val compilationProperty = SimpleStringProperty(compilation)
-    val inlinedProperty = SimpleStringProperty(inlined)
     val reasonProperty = SimpleStringProperty(reason)
 }
 
