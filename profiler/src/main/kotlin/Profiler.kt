@@ -1,9 +1,12 @@
+@file:Suppress("DEPRECATED_IDENTITY_EQUALS")
+
 import javafx.beans.property.*
 import javafx.collections.*
 import javafx.concurrent.Task
 import javafx.scene.control.*
 import javafx.scene.layout.*
 import javafx.scene.text.*
+import javafx.util.*
 import org.adoptopenjdk.jitwatch.chain.*
 import org.adoptopenjdk.jitwatch.core.*
 import org.adoptopenjdk.jitwatch.core.JITWatchConstants.*
@@ -13,7 +16,7 @@ import org.adoptopenjdk.jitwatch.util.*
 import tornadofx.*
 import java.io.*
 import java.util.*
-import java.util.concurrent.Executors.*
+import java.util.concurrent.*
 import kotlin.collections.ArrayList
 import kotlin.collections.HashMap
 import kotlin.collections.HashSet
@@ -30,26 +33,30 @@ class ProfilerView : View("Profiler") {
     private val selectedProcessInfo = SimpleObjectProperty<File>()
     private val values = FXCollections.observableArrayList<JitProfilingInfo>()
     private val selectedMethod = SimpleObjectProperty<JitProfilingInfo>()
-    private val profileCompleted = SimpleObjectProperty<Boolean>()
+    private val profileCompleted = SimpleObjectProperty<Boolean>(false)
     private lateinit var table: TableView<JitProfilingInfo>
     private lateinit var profilingIndicator: ProgressIndicator
     private val executor = getExecutor()
+    private var loader: Task<List<JitProfilingInfo>>? = null
 
     override val root = vbox {
         hbox {
-            button("Choose file to profile") {
+            button("Choose file to profile & start profiling") {
                 action {
                     val file = chooseFile("Select file", arrayOf())
-                    if (file.isNotEmpty()) selectedProcessInfo.set(file[0])
+                    if (file.isNotEmpty()) {
+                        selectedProcessInfo.set(file[0])
+                        values.clear()
+                        profilingIndicator.isVisible = true
+                        loadJitProfilingInfo()
+                        profileCompleted.set(null)
+                    }
                 }
             }
-            button("Start profiling") {
-                enableWhen { selectedProcessInfo.isNotNull }
+            button("Cancel") {
+                enableWhen { profileCompleted.isNull }
                 action {
-                    values.clear()
-                    profilingIndicator.isVisible = true
-                    profileCompleted.set(null)
-                    loadJitProfilingInfo()
+                    loader?.cancel()
                 }
             }
             profilingIndicator = progressindicator {
@@ -57,7 +64,7 @@ class ProfilerView : View("Profiler") {
             }
             textfield {
                 promptText = "Enter class name"
-                enableWhen { profileCompleted.isNotNull }
+                enableWhen { profileCompleted.isEqualTo(true) }
                 prefWidth = 400.0
                 textProperty().addListener { _, _, new ->
                     val filter = profilingInfo.filter { it.fullMethodName.toLowerCase().startsWith(new, true)
@@ -80,10 +87,15 @@ class ProfilerView : View("Profiler") {
                     profilingIndicator.isVisible = false
                     profileCompleted.set(true)
                 }
+                setOnCancelled {
+                    profilingIndicator.isVisible = false
+                    profileCompleted.set(false)
+                }
             }
 
             override fun call(): List<JitProfilingInfo> = profile(selectedProcessInfo.get().absolutePath)
         }
+        loader = listLoader
         executor.submit(listLoader)
     }
 
@@ -104,22 +116,32 @@ class ProfilerView : View("Profiler") {
             vgrow = Priority.ALWAYS
             hgrow = Priority.ALWAYS
 
-            contextMenu = ContextMenu().apply {
-                item("Show detailed info").action {
-                    selectedItem?.let {
-                        DetailedMethodInfoView(it).openWindow()
-                    }
-                }
-            }
+            rowFactory = createDoubleClickHandlerRowFactory({ TableRow<JitProfilingInfo>() },
+                                                            { DetailedMethodInfoView(it).openWindow() })
             placeholder = profilingIndicator
         }
     }
 
-    private fun getExecutor() = newSingleThreadExecutor { r: Runnable? ->
+    private fun getExecutor() = ThreadPoolExecutor(1, Integer.MAX_VALUE, 60L, TimeUnit.SECONDS,
+            SynchronousQueue<Runnable>(), getThreadFactory())
+
+    private fun getThreadFactory(): (Runnable?) -> Thread = { r: Runnable? ->
         val t = Thread(r)
         t.isDaemon = true
         t
     }
+}
+
+fun <S> createDoubleClickHandlerRowFactory(rowCreator: () -> TableRow<S>, actionOnDoubleClick: (S) -> Unit):
+        Callback<TableView<S>, TableRow<S>> = Callback {
+    val row: TableRow<S> = rowCreator.invoke()
+    row.setOnMouseClicked { event ->
+        if (event.clickCount === 2 && !row.isEmpty()) {
+            val rowData: S = row.item
+            actionOnDoubleClick.invoke(rowData)
+        }
+    }
+    row
 }
 
 fun getSignature(member: IMetaMember) = member.fullyQualifiedMemberName + "(" + toString(member.paramTypeNames) + ")"

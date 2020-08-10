@@ -68,7 +68,14 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             for (node in compileTrees) {
                 val compilation = node.compilation
                 tab(compilation.signature + ", " + compilation.compilationDuration + "ms") {
-                    add(buildInlineTree(node))
+                    hbox {
+                        add(buildInlineTree(node))
+                        label(graphic = getColorKeys()) {
+                            padding = Insets(10.0, 10.0, 10.0, 10.0)
+                            maxWidth = Text(InlinedInfoKey.values().map { it.keyName() }.joinToString("\n"))
+                                    .layoutBounds.width + 20.0
+                        }
+                    }
                 }
             }
             tab("Inlined into (" + inlineIntoValues.size + ")") {
@@ -76,6 +83,16 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             }
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
             prefHeight = 376.0
+        }
+    }
+
+    private fun getColorKeys(): TextFlow {
+        return textflow {
+            InlinedInfoKey.values().forEach {
+                val text = Text(it.keyName() + "\n")
+                text.fill = it.color()
+                add(text)
+            }
         }
     }
 
@@ -87,13 +104,8 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             prefHeight = 376.0 / 2
             hgrow = Priority.ALWAYS
             vgrow = Priority.ALWAYS
-            contextMenu = ContextMenu().apply {
-                item("Show detailed info").action {
-                    selectedItem?.let {
-                        DetailedMethodInfoView(it.caller).openWindow()
-                    }
-                }
-            }
+            rowFactory = createDoubleClickHandlerRowFactory({ TableRow<InlineIntoInfo>() },
+                                                            { DetailedMethodInfoView(it.caller).openWindow() })
             columnResizePolicy = SmartResize.POLICY
         }
     }
@@ -107,36 +119,68 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
         return treeview(itemFactory(node)) {
             populate(itemFactory = itemFactory) {
                 if (it.value.children.isNotEmpty())
-                    it.value.children.filter { child -> child.isInlined }
+                    it.value.children
                 else
                     null
             }
-            cellFactory = Factory(node)
+            cellFactory = factory(node)
+            hgrow = Priority.ALWAYS
+            vgrow = Priority.ALWAYS
         }
     }
 
-    class Factory(val root: CompileNode): Callback<TreeView<CompileNode>, TreeCell<CompileNode>> {
-        override fun call(param: TreeView<CompileNode>?): TreeCell<CompileNode> {
-            return object : TreeCell<CompileNode>() {
-                override fun updateItem(item: CompileNode?, empty: Boolean) {
-                    super.updateItem(item, empty)
-                    when {
-                        empty -> {
-                            text = null
-                            tooltip = null
-                        }
-                        treeItem.value == root -> {
-                            text = if (item!!.member == null) "Unknown" else getSignature(item.member)
-                            tooltip = Tooltip("Root node")
-                        }
-                        else -> {
-                            text = if (item!!.member == null) "Unknown" else getSignature(item.member)
-                            tooltip = Tooltip(item.tooltipText)
-                        }
+    private fun factory(root: CompileNode): Callback<TreeView<CompileNode>, TreeCell<CompileNode>> = Callback {
+        object : TreeCell<CompileNode>() {
+            override fun updateItem(item: CompileNode?, empty: Boolean) {
+                super.updateItem(item, empty)
+                if (!empty) {
+                    textFill = InlinedInfoKey.values().first { it.check(treeItem.value) }.color()
+                }
+                when {
+                    empty -> {
+                        text = null
+                        tooltip = null
+                    }
+                    treeItem.value == root -> {
+                        text = if (item!!.member == null) "Unknown" else getSignature(item.member)
+                        tooltip = Tooltip("Root node\n${getNativeSizeInfo(root)}")
+                    }
+                    else -> {
+                        text = if (item!!.member == null) "Unknown" else getSignature(item.member)
+                        tooltip = Tooltip(item.tooltipText)
                     }
                 }
             }
+
+            private fun getNativeSizeInfo(node: CompileNode) = "Final native size: " + (node.compilation?.nativeSize ?: "unknown")
         }
+    }
+
+    private enum class InlinedInfoKey {
+        IsInlined {
+            override fun color(): Color = Color.GREEN
+            override fun check(node: CompileNode) = node.isInlined
+            override fun keyName() = "Inlined"
+        },
+        IsCompiled {
+            override fun color(): Color = Color.RED
+            override fun check(node: CompileNode) = node.isCompiled
+            override fun keyName() = "Compiled"
+        },
+        IsVirtual {
+            override fun color() = Color.PURPLE
+            override fun check(node: CompileNode) = node.isVirtualCall
+            override fun keyName() = "Virtual call"
+        },
+        IsNotCompiled {
+            override fun color() = Color.BLACK
+            override fun check(node: CompileNode) = !node.isCompiled
+            override fun keyName() = "Not compiled"
+        };
+
+        abstract fun color(): Color
+        abstract fun check(node: CompileNode): Boolean
+        abstract fun keyName(): String
     }
 }
 
@@ -166,7 +210,7 @@ private fun getDeoptimizationInfo(jitProfilingInfo: JitProfilingInfo): List<Deop
         if (compilationDeoptimizations.isEmpty()) continue
         val compilerString = compilation.signature
         val index = compilation.index
-        deoptimizationInfos.addAll(compilationDeoptimizations.map { DeoptimizationInfo(index, compilerString, it.reason, it.action) })
+        deoptimizationInfos.addAll(compilationDeoptimizations.map { DeoptimizationInfo(index + 1, compilerString, it.reason, it.action) })
     }
     return deoptimizationInfos.toList().sortedWith(compareBy { it.compilationIndex } )
 }
