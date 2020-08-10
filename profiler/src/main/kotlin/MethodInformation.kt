@@ -7,6 +7,7 @@ import javafx.scene.paint.*
 import javafx.scene.text.*
 import javafx.util.*
 import org.adoptopenjdk.jitwatch.chain.*
+import org.adoptopenjdk.jitwatch.model.*
 import tornadofx.*
 import kotlin.math.*
 
@@ -16,6 +17,7 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
     private val compileTrees = jitProfilingInfo.compileTrees
     private val inlineIntoValues = FXCollections.observableArrayList(jitProfilingInfo.inlinedInto)
     private val maxLabelWidth = 667.0
+    private lateinit var inlinedInfoTabPane: TabPane
 
     override val root = vbox {
         hbox {
@@ -45,6 +47,8 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
                     columnResizePolicy = TableView.CONSTRAINED_RESIZE_POLICY
                     hgrow = Priority.ALWAYS
                     vgrow = Priority.ALWAYS
+                    rowFactory = createDoubleClickHandlerRowFactory({ TableRow<DeoptimizationInfo>() },
+                            { showPathToDeoptimizationReason(it) })
                 }
                 alignment = Pos.CENTER
                 hgrow = Priority.ALWAYS
@@ -64,7 +68,7 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             val oldFont = font
             font = Font(oldFont.size + 2)
         }
-        tabpane {
+        inlinedInfoTabPane = tabpane {
             for (node in compileTrees) {
                 val compilation = node.compilation
                 tab(compilation.signature + ", " + compilation.compilationDuration + "ms") {
@@ -86,30 +90,6 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
         }
     }
 
-    private fun getColorKeys(): TextFlow {
-        return textflow {
-            InlinedInfoKey.values().forEach {
-                val text = Text(it.keyName() + "\n")
-                text.fill = it.color()
-                add(text)
-            }
-        }
-    }
-
-    private fun createInlinedIntoTabInfo(): TableView<InlineIntoInfo> {
-        return tableview(SimpleListProperty(inlineIntoValues)) {
-            column("Name", InlineIntoInfo::methodNameProperty).remainingWidth()
-            column("Compiler", InlineIntoInfo::compilationProperty)
-            column("Reason", InlineIntoInfo::reasonProperty)
-            prefHeight = 376.0 / 2
-            hgrow = Priority.ALWAYS
-            vgrow = Priority.ALWAYS
-            rowFactory = createDoubleClickHandlerRowFactory({ TableRow<InlineIntoInfo>() },
-                                                            { DetailedMethodInfoView(it.caller).openWindow() })
-            columnResizePolicy = SmartResize.POLICY
-        }
-    }
-
     private fun buildInlineTree(node: CompileNode) : TreeView<CompileNode> {
         val itemFactory = { n: CompileNode ->
             val item = TreeItem(n)
@@ -127,6 +107,12 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             hgrow = Priority.ALWAYS
             vgrow = Priority.ALWAYS
         }
+    }
+
+    private fun showPathToDeoptimizationReason(deoptimizationInfo: DeoptimizationInfo) {
+        inlinedInfoTabPane.selectionModel.select(deoptimizationInfo.compilationIndex)
+        val deoptimizationChain = deoptimizationInfo.deoptimizationChain.joinToString(" ->\n") { getSignature(it) }
+        information("Deoptimization chain", deoptimizationChain)
     }
 
     private fun factory(root: CompileNode): Callback<TreeView<CompileNode>, TreeCell<CompileNode>> = Callback {
@@ -153,6 +139,28 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             }
 
             private fun getNativeSizeInfo(node: CompileNode) = "Final native size: " + (node.compilation?.nativeSize ?: "unknown")
+        }
+    }
+
+    private fun getColorKeys(): TextFlow = textflow {
+        InlinedInfoKey.values().forEach {
+            val text = Text(it.keyName() + "\n")
+            text.fill = it.color()
+            add(text)
+        }
+    }
+
+    private fun createInlinedIntoTabInfo(): TableView<InlineIntoInfo> {
+        return tableview(SimpleListProperty(inlineIntoValues)) {
+            column("Name", InlineIntoInfo::methodNameProperty).remainingWidth()
+            column("Compiler", InlineIntoInfo::compilationProperty)
+            column("Reason", InlineIntoInfo::reasonProperty)
+            prefHeight = 376.0 / 2
+            hgrow = Priority.ALWAYS
+            vgrow = Priority.ALWAYS
+            rowFactory = createDoubleClickHandlerRowFactory({ TableRow<InlineIntoInfo>() },
+                                                            { DetailedMethodInfoView(it.caller).openWindow() })
+            columnResizePolicy = SmartResize.POLICY
         }
     }
 
@@ -210,13 +218,15 @@ private fun getDeoptimizationInfo(jitProfilingInfo: JitProfilingInfo): List<Deop
         if (compilationDeoptimizations.isEmpty()) continue
         val compilerString = compilation.signature
         val index = compilation.index
-        deoptimizationInfos.addAll(compilationDeoptimizations.map { DeoptimizationInfo(index + 1, compilerString, it.reason, it.action) })
+        deoptimizationInfos.addAll(compilationDeoptimizations.map { DeoptimizationInfo(index, compilerString, it.reason,
+                it.action, it.deoptimizationChain) })
     }
     return deoptimizationInfos.toList().sortedWith(compareBy { it.compilationIndex } )
 }
 
-data class DeoptimizationInfo(val compilationIndex: Int, val compiler: String, val reason: String, val action: String) {
-    val compilationIndexProperty = SimpleIntegerProperty(compilationIndex)
+data class DeoptimizationInfo(val compilationIndex: Int, val compiler: String, val reason: String, val action: String,
+                              val deoptimizationChain: List<IMetaMember>) {
+    val compilationIndexProperty = SimpleIntegerProperty(compilationIndex + 1)
     val compilerProperty = SimpleStringProperty(compiler)
     val reasonProperty = SimpleStringProperty(reason)
     val actionProperty = SimpleStringProperty(action)

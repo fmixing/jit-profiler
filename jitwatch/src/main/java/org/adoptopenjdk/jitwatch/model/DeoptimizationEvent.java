@@ -10,6 +10,9 @@ public class DeoptimizationEvent
     private final long stamp;
     private final String compileID;
     private final Map<String, String> tagAttributes;
+    /**
+     * From the deoptimized method to the method that caused deoptimization
+     */
     private final List<IMetaMember> deoptimizationChain;
     public final String tag;
 
@@ -51,5 +54,9 @@ public class DeoptimizationEvent
     public String getComment()
     {
         return tagAttributes.get(ATTR_COMMENT);
+    }
+
+    public List<IMetaMember> getDeoptimizationChain() {
+        return deoptimizationChain;
     }
 }

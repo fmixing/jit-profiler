@@ -136,7 +136,7 @@ fun <S> createDoubleClickHandlerRowFactory(rowCreator: () -> TableRow<S>, action
         Callback<TableView<S>, TableRow<S>> = Callback {
     val row: TableRow<S> = rowCreator.invoke()
     row.setOnMouseClicked { event ->
-        if (event.clickCount === 2 && !row.isEmpty()) {
+        if (event.clickCount === 2 && !row.isEmpty) {
             val rowData: S = row.item
             actionOnDoubleClick.invoke(rowData)
         }
