@@ -176,12 +176,12 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             override fun keyName() = "Compiled"
         },
         IsVirtual {
-            override fun color() = Color.PURPLE
+            override fun color(): Color = Color.PURPLE
             override fun check(node: CompileNode) = node.isVirtualCall
             override fun keyName() = "Virtual call"
         },
         IsNotCompiled {
-            override fun color() = Color.BLACK
+            override fun color(): Color = Color.BLACK
             override fun check(node: CompileNode) = !node.isCompiled
             override fun keyName() = "Not compiled"
         };

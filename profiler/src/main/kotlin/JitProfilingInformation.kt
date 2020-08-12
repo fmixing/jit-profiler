@@ -3,6 +3,8 @@
 import javafx.beans.property.*
 import javafx.collections.*
 import javafx.concurrent.Task
+import javafx.geometry.*
+import javafx.scene.*
 import javafx.scene.control.*
 import javafx.scene.layout.*
 import javafx.scene.text.*
@@ -21,14 +23,14 @@ import kotlin.collections.ArrayList
 import kotlin.collections.HashMap
 import kotlin.collections.HashSet
 
-
-fun main(args: Array<String>) {
-    launch<Profiler>(args)
+interface JitProfilingInformationExtractor {
+    fun setProfilingInfoFrom(startTime: Long, fromTime: Long)
+    fun setProfilingInfoTo(startTime: Long, toTime: Long)
+    fun clearProfilingInfoInterval()
+    fun startProfiling(file: File)
 }
 
-class Profiler : App(ProfilerView::class)
-
-class ProfilerView : View("Profiler") {
+class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
     private lateinit var profilingInfo: List<JitProfilingInfo>
     private val selectedProcessInfo = SimpleObjectProperty<File>()
     private val values = FXCollections.observableArrayList<JitProfilingInfo>()
@@ -38,18 +40,18 @@ class ProfilerView : View("Profiler") {
     private lateinit var profilingIndicator: ProgressIndicator
     private val executor = getExecutor()
     private var loader: Task<List<JitProfilingInfo>>? = null
+    private val profilingInfoFrom = SimpleObjectProperty<Long>()
+    private val profilingInfoTo = SimpleObjectProperty<Long>()
+    private lateinit var fromField: TextField
+    private lateinit var toField: TextField
 
-    override val root = vbox {
+    val root = vbox {
         hbox {
             button("Choose file to profile & start profiling") {
                 action {
                     val file = chooseFile("Select file", arrayOf())
                     if (file.isNotEmpty()) {
-                        selectedProcessInfo.set(file[0])
-                        values.clear()
-                        profilingIndicator.isVisible = true
-                        loadJitProfilingInfo()
-                        profileCompleted.set(null)
+                        startProfiling(file[0])
                     }
                 }
             }
@@ -74,8 +76,20 @@ class ProfilerView : View("Profiler") {
                     table.sortOrder.setAll(sortOrder)
                 }
             }
+            addFiltering()
         }
         table = createJitProfilingInfoTable()
+    }
+
+    override fun startProfiling(file: File) {
+        if (profilingInfoFrom.value != null && profilingInfoTo.value != null && profilingInfoFrom.value > profilingInfoTo.value) {
+            warning("Profiling interval is incorrect")
+        }
+        selectedProcessInfo.set(file)
+        values.clear()
+        profilingIndicator.isVisible = true
+        loadJitProfilingInfo()
+        profileCompleted.set(null)
     }
 
     private fun loadJitProfilingInfo() {
@@ -122,6 +136,27 @@ class ProfilerView : View("Profiler") {
         }
     }
 
+    private fun HBox.addFiltering() {
+        label {
+            text = "Filter info from"
+            padding = Insets(5.0, 10.0, 0.0, 10.0)
+        }
+        fromField = textfield {
+            filterInput { it.controlNewText.isDouble() }
+            prefWidth = 100.0
+        }
+        label {
+            text = "to"
+            padding = Insets(5.0, 10.0, 0.0, 10.0)
+        }
+        toField = textfield {
+            filterInput { it.controlNewText.isDouble() }
+            prefWidth = 100.0
+        }
+        button("Filter") {
+        }
+    }
+
     private fun getExecutor() = ThreadPoolExecutor(1, Integer.MAX_VALUE, 60L, TimeUnit.SECONDS,
             SynchronousQueue<Runnable>(), getThreadFactory())
 
@@ -129,6 +164,19 @@ class ProfilerView : View("Profiler") {
         val t = Thread(r)
         t.isDaemon = true
         t
+    }
+
+    override fun setProfilingInfoFrom(startTime: Long, fromTime: Long) {
+        fromField.text = ((fromTime - startTime) / 1000.0).toString()
+    }
+
+    override fun setProfilingInfoTo(startTime: Long, toTime: Long) {
+        toField.text = ((toTime - startTime)/ 1000.0).toString()
+    }
+
+    override fun clearProfilingInfoInterval() {
+        fromField.clear()
+        toField.clear()
     }
 }
 
