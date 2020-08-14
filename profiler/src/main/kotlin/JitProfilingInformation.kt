@@ -98,6 +98,7 @@ class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
                 setOnSucceeded {
                     profilingInfo = value
                     values.setAll(value)
+                    filterJitProfilingInfo()
                     profilingIndicator.isVisible = false
                     profileCompleted.set(true)
                 }
@@ -113,17 +114,35 @@ class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
         executor.submit(listLoader)
     }
 
+    private fun filterJitProfilingInfo() {
+        if (profilingInfoFrom.value != null && profilingInfoTo.value != null && profilingInfoFrom.value > profilingInfoTo.value) {
+            warning("Profiling interval is incorrect")
+        }
+        val from = profilingInfoFrom.value ?: Long.MIN_VALUE
+        val to = profilingInfoTo.value ?: Long.MAX_VALUE
+        for (profilingInfo in profilingInfo) {
+            profilingInfo.totalCompilationTimeProperty.set(profilingInfo.totalCompilationTimeFromTo(from, to))
+            profilingInfo.compilationCountProperty.set(profilingInfo.compilationCountFromTo(from, to))
+            profilingInfo.decompilationCountProperty.set(profilingInfo.decompilationCountFromTo(from, to))
+            profilingInfo.currentNativeSizeProperty.set(profilingInfo.currentNativeSizeAtTimestamp(to))
+            profilingInfo.inlineIntoCountProperty.set(profilingInfo.inlineIntoCountFromTo(from, to))
+        }
+        values.setAll(profilingInfo)
+    }
+
     private fun VBox.createJitProfilingInfoTable(): TableView<JitProfilingInfo> {
         return tableview(values) {
             column("Method name", JitProfilingInfo::methodNameProperty).remainingWidth()
             column("Total compilation time (ms)", JitProfilingInfo::totalCompilationTimeProperty)
                     .prefWidth(Text(columns[1].text).layoutBounds.width + 30.0)
-            column("Decompilation count", JitProfilingInfo::decompilationCountProperty)
+            column("Compilation count", JitProfilingInfo::compilationCountProperty)
                     .prefWidth(Text(columns[2].text).layoutBounds.width + 30.0)
-            column("Current native size", JitProfilingInfo::currentNativeSizeProperty)
+            column("Decompilation count", JitProfilingInfo::decompilationCountProperty)
                     .prefWidth(Text(columns[3].text).layoutBounds.width + 30.0)
-            column("Inlined into", JitProfilingInfo::inlineIntoCountProperty)
+            column("Current native size", JitProfilingInfo::currentNativeSizeProperty)
                     .prefWidth(Text(columns[4].text).layoutBounds.width + 30.0)
+            column("Inlined into", JitProfilingInfo::inlineIntoCountProperty)
+                    .prefWidth(Text(columns[5].text).layoutBounds.width + 30.0)
             bindSelected(selectedMethod)
             setPrefSize(667.0 * 2, 376.0 * 2)
             columnResizePolicy = SmartResize.POLICY
@@ -131,7 +150,8 @@ class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
             hgrow = Priority.ALWAYS
 
             rowFactory = createDoubleClickHandlerRowFactory({ TableRow<JitProfilingInfo>() },
-                                                            { DetailedMethodInfoView(it).openWindow() })
+                                                            { DetailedMethodInfoView(it, profilingInfoFrom.value,
+                                                                    profilingInfoTo.value).openWindow() })
             placeholder = profilingIndicator
         }
     }
@@ -141,19 +161,40 @@ class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
             text = "Filter info from"
             padding = Insets(5.0, 10.0, 0.0, 10.0)
         }
-        fromField = textfield {
-            filterInput { it.controlNewText.isDouble() }
-            prefWidth = 100.0
-        }
+        fromField = getStampTextField(profilingInfoFrom)
         label {
             text = "to"
             padding = Insets(5.0, 10.0, 0.0, 10.0)
         }
-        toField = textfield {
+        toField = getStampTextField(profilingInfoTo)
+        button("Filter") {
+            action {
+                filterJitProfilingInfo()
+            }
+        }
+        button("Clear") {
+            action {
+                clearProfilingInfoInterval()
+                filterJitProfilingInfo()
+            }
+        }
+    }
+
+    private fun HBox.getStampTextField(stamp: SimpleObjectProperty<Long>): TextField {
+        return textfield {
             filterInput { it.controlNewText.isDouble() }
             prefWidth = 100.0
-        }
-        button("Filter") {
+            promptText = "123.456"
+            textProperty().addListener { _, _, new ->
+                val stampOrNull = new.toDoubleOrNull()
+                if (stampOrNull == null) {
+                    stamp.set(null)
+                } else {
+                    // перевод в милисекунды
+                    val from = stampOrNull * 1000
+                    stamp.set(from.toLong())
+                }
+            }
         }
     }
 
@@ -167,14 +208,18 @@ class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
     }
 
     override fun setProfilingInfoFrom(startTime: Long, fromTime: Long) {
+        profilingInfoFrom.set(fromTime - startTime)
         fromField.text = ((fromTime - startTime) / 1000.0).toString()
     }
 
     override fun setProfilingInfoTo(startTime: Long, toTime: Long) {
+        profilingInfoTo.set(toTime - startTime)
         toField.text = ((toTime - startTime)/ 1000.0).toString()
     }
 
     override fun clearProfilingInfoInterval() {
+        profilingInfoFrom.set(null)
+        profilingInfoTo.set(null)
         fromField.clear()
         toField.clear()
     }
@@ -230,27 +275,52 @@ private fun loadClassPathFromLogIfNeeded(logParser: HSLPWrapper) {
 }
 
 private fun buildTableInfo(map: HashMap<String, MutableList<JITEvent>>, model: JITDataModel): ArrayList<JitProfilingInfo> {
-    val list = ArrayList<JitProfilingInfo>()
+    val infos = ArrayList<JitProfilingInfo>()
     val nameToInfo = HashMap<String, JitProfilingInfo>()
+
     for (name in map.keys) {
         val events = map[name]!!
         val jitProfilingInfo = if (events.isEmpty()) {
-            JitProfilingInfo(name, -1, -1, -1, -1, false, events, model)
+            JitProfilingInfo(name, 0, 0, LongArray(0), LongArray(0),  IntArray(0),
+                    0, LongArray(0), events, model)
         } else {
-            val time = events[0].eventMember.compilations.map { it.compilationDuration }.sum()
-            val nativeSize = events[0].eventMember.lastCompilation?.nativeSize ?: -1
-            val bytecodeSize = events[0].eventMember.lastCompilation?.bytecodeSize ?: -1
-            val decompilationCount = if (events[0].eventMember.lastCompilation != null) {
-                events[0].eventMember.lastCompilation.compiledAttributes["decompiles"]?.toInt() ?: 0
-            } else 0
-            JitProfilingInfo(name, time, decompilationCount, nativeSize, bytecodeSize, events[0].eventMember.isCompiled, events, model)
+            createJitProfilingInfo(name, events[0].eventMember, events, model)
         }
-        if (nameToInfo.containsKey(name)) kotlin.error("Different jitProfilingInfos for the same method name")
-        list += jitProfilingInfo
+        infos += jitProfilingInfo
         nameToInfo[name] = jitProfilingInfo
     }
     fillInlinedIntoInfo(map, nameToInfo)
-    return list
+    return infos
+}
+
+private fun createJitProfilingInfo(name: String, eventMember: IMetaMember, events: MutableList<JITEvent>, model: JITDataModel): JitProfilingInfo {
+    val compilationCount = eventMember.compilations.size
+    val compilationToTimestamp = LongArray(compilationCount)
+    val compilationToCompilationTimeMs = LongArray(compilationCount)
+    val compilationToBytecodeSize = IntArray(compilationCount)
+    val compilationToNativeSize = IntArray(compilationCount)
+    val decompilationCount = eventMember.compilations.mapNotNull { it.compiledAttributes["decompiles"] }.map { it.toInt() }.max() ?: 0
+    val decompilationToTimestamp = LongArray(decompilationCount)
+    var currentDecompilation = 0
+    for ((index, compilation) in eventMember.compilations.withIndex()) {
+        compilationToTimestamp[index] = compilation.stampNMethodEmitted
+        compilationToCompilationTimeMs[index] = compilation.compilationDuration
+        compilationToBytecodeSize[index] = compilation.bytecodeSize
+        compilationToNativeSize[index] = compilation.nativeSize
+        val decompiles = compilation.compiledAttributes["decompiles"] ?: continue
+        val decompilesBeforeTaskQueued = decompiles.toInt()
+        // если изменилось количество декомпиляций с прошлой компиляции
+        if (decompilesBeforeTaskQueued > currentDecompilation) {
+            // считаем временем декомпиляции – момент, когда задачу на компиляцию добавили в очередь, так как в jit логе
+            // нет события "декомпиляция"
+            decompilationToTimestamp[decompilesBeforeTaskQueued - 1] = compilation.stampTaskQueued
+            currentDecompilation = decompilesBeforeTaskQueued - 1
+        }
+    }
+
+    return JitProfilingInfo(name, eventMember.lastCompilation?.bytecodeSize ?: 0, compilationCount,
+            compilationToTimestamp, compilationToCompilationTimeMs, compilationToNativeSize, decompilationCount,
+            decompilationToTimestamp, events, model)
 }
 
 private fun fillInlinedIntoInfo(map: HashMap<String, MutableList<JITEvent>>, nameToInfo: HashMap<String, JitProfilingInfo>) {
@@ -265,9 +335,9 @@ private fun fillInlinedIntoInfo(map: HashMap<String, MutableList<JITEvent>>, nam
                 var sortInlineInto = compareBy<InlineIntoInfo> { it.caller.fullMethodName }
                 sortInlineInto = sortInlineInto.thenBy { it.compilation }
                 val orElse = inlinedIntoForMethod.getOrPut(getSignature(child.member)) { TreeSet(sortInlineInto) }
-                val reason = child.tooltipText?.split(S_NEWLINE)?.filter { it.startsWith("Inlined") }?.map { it.split(", ")[1] }?.first()
-                        ?: "Unknown"
-                orElse += InlineIntoInfo(jitProfilingInfo, compilation, reason)
+                val reason = child.tooltipText?.split(S_NEWLINE)?.filter { it.startsWith("Inlined") }
+                        ?.map { it.split(", ")[1] }?.first() ?: "Unknown"
+                orElse += InlineIntoInfo(jitProfilingInfo, tree.compilation.stampNMethodEmitted, compilation, reason)
             }
         }
         jitProfilingInfo.compileTrees = compileTree
@@ -280,27 +350,89 @@ private fun fillInlinedIntoInfo(map: HashMap<String, MutableList<JITEvent>>, nam
     }
 }
 
-data class InlineIntoInfo(val caller: JitProfilingInfo, val compilation: String, val reason: String) {
+data class InlineIntoInfo(val caller: JitProfilingInfo, val inlinedIntoCompilationTimestamp: Long, val compilation: String,
+                          val reason: String) {
     val methodNameProperty = SimpleStringProperty(caller.fullMethodName)
     val compilationProperty = SimpleStringProperty(compilation)
     val reasonProperty = SimpleStringProperty(reason)
 }
 
 data class JitProfilingInfo(val fullMethodName: String,
-                            val totalCompilationTime: Long,
+                            val bytecodeSize: Int,
+                            val compilationsCount: Int,
+                            val compilationToTimestamp: LongArray,
+                            val compilationToCompilationTimeMs: LongArray,
+                            val compilationToNativeSize: IntArray,
                             val decompilationCount: Int,
-                            val currentNativeSize: Int,
-                            val currentBytecodeSize: Int,
-                            val compiled: Boolean,
+                            val decompilationToTimestamp: LongArray,
                             val events: List<JITEvent>,
                             val model: JITDataModel) {
     val methodNameProperty = SimpleStringProperty(fullMethodName)
-    val totalCompilationTimeProperty = SimpleLongProperty(totalCompilationTime)
+    val totalCompilationTimeProperty = SimpleLongProperty(compilationToCompilationTimeMs.sum())
+    val compilationCountProperty = SimpleIntegerProperty(compilationsCount)
     val decompilationCountProperty = SimpleIntegerProperty(decompilationCount)
-    val currentNativeSizeProperty = SimpleIntegerProperty(currentNativeSize)
+    val currentNativeSizeProperty = SimpleIntegerProperty(compilationToNativeSize.last())
     val inlineIntoCountProperty = SimpleIntegerProperty(0)
     lateinit var compileTrees: List<CompileNode>
     lateinit var inlinedInto: List<InlineIntoInfo>
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as JitProfilingInfo
+        if (fullMethodName != other.fullMethodName) return false
+        return true
+    }
+
+    override fun hashCode(): Int {
+        return fullMethodName.hashCode()
+    }
+}
+
+fun JitProfilingInfo.totalCompilationTimeFromTo(from: Long, to: Long): Long {
+    var totalTime = 0L
+    for (i in 0 until this.compilationsCount) {
+        if (this.compilationToTimestamp[i] in from..to) {
+            totalTime += this.compilationToCompilationTimeMs[i]
+        }
+    }
+    return totalTime
+}
+
+fun JitProfilingInfo.compilationCountFromTo(from: Long, to: Long): Int {
+    return elementsCountFromTo(this.compilationToTimestamp, from, to)
+}
+
+fun JitProfilingInfo.decompilationCountFromTo(from: Long, to: Long): Int {
+    return elementsCountFromTo(this.decompilationToTimestamp, from, to)
+}
+
+private fun elementsCountFromTo(timestamps: LongArray, from: Long, to: Long): Int {
+    var count = 0
+    for (i in timestamps.indices) {
+        if (timestamps[i] in from..to) {
+            count += 1
+        }
+    }
+    return count
+}
+
+fun JitProfilingInfo.currentNativeSizeAtTimestamp(to: Long): Int {
+    var toIndex = this.compilationToTimestamp.binarySearch(to)
+    // если указывает на -1, то это значит, что меньше элемента stampArray[0]
+    if (toIndex == -1) return 0
+    if (toIndex < 0) {
+        // переводим в указание на позицию, куда вставить элемент, и вычитаем единицу, чтобы указывать на тот элемент,
+        // который меньше
+        toIndex = -(toIndex + 1) - 1
+    }
+    return this.compilationToNativeSize[toIndex]
+}
+
+fun JitProfilingInfo.inlineIntoCountFromTo(from: Long, to: Long): Int {
+    return this.inlinedInto
+            .filter { it.inlinedIntoCompilationTimestamp in from..to }
+            .count()
 }
 
 private class HSLPWrapper(jitListener: IJITListener?) : HotSpotLogParser(jitListener) {

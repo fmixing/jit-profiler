@@ -39,22 +39,20 @@ class ProcessAnalyserView(private val informationExtractor: JitProfilingInformat
         label {
             text = "Choose java process to profile"
         }
-        listview(javaProcesses) {
+        tableview(javaProcesses) {
+            column("Process", ProcessInfo::processProperty).remainingWidth()
+            column("Can start profiling?", ProcessInfo::enabledProperty).remainingWidth()
             setPrefSize(667.0, 376.0)
             vgrow = Priority.ALWAYS
+            hgrow = Priority.ALWAYS
             bindSelected(selectedProcessInfo)
-            contextMenu = ContextMenu().apply {
-                item("Select process to profile").action {
-                    selectedItem?.let {
-                        if (jitLoggingEnabled(it)) {
-                            processInfoToProfile.set(it)
-                            informationExtractor.clearProfilingInfoInterval()
-                        } else {
-                            warning("Cannot start profiling because jit logging wasn't enabled")
-                        }
-                    }
+            rowFactory = createDoubleClickHandlerRowFactory({ TableRow<ProcessInfo>() }, {
+                if (it.jitLoggingEnabled) {
+                    processInfoToProfile.set(it)
+                    informationExtractor.clearProfilingInfoInterval()
                 }
-            }
+            })
+            columnResizePolicy = SmartResize.POLICY
         }
         addProcessingButtons()
         alignment = Pos.CENTER
@@ -104,8 +102,6 @@ class ProcessAnalyserView(private val informationExtractor: JitProfilingInformat
             }
         }
     }
-
-    private fun jitLoggingEnabled(processInfo: ProcessInfo) = processInfo.jvmArgs.contains("-XX:+LogCompilation")
 
     private fun getLogFile(processInfo: ProcessInfo): String? {
         return processInfo.jvmArgs.split(" ")
@@ -165,13 +161,16 @@ private fun scanProcesses(): List<ProcessInfo> {
             }
             val startTime = getProcessStartTime(pid)
             if (startTime != null) {
+                val jvmArgs = MonitoredVmUtil.jvmArgs(vm) ?: ""
                 processInfos += ProcessInfo(pid, mainClass, MonitoredVmUtil.mainArgs(vm) ?: "",
-                        MonitoredVmUtil.jvmArgs(vm) ?: "", systemProperties, startTime)
+                        jvmArgs, jitLoggingEnabled(jvmArgs), systemProperties, startTime)
             }
         } catch (ignored: MonitorException) {} // может случиться, если в процессе получения информации процесс остановился
     }
     return processInfos
 }
+
+private fun jitLoggingEnabled(jvmArgs: String) = jvmArgs.contains("-XX:+LogCompilation")
 
 private fun getSystemPropertiesIfPossible(vm: MonitoredVm): Properties? {
     var systemProperties: Properties? = null
@@ -205,7 +204,11 @@ private fun getProcessStartTime(pid: Long): Long? {
 }
 
 data class ProcessInfo(val pid: Long, val mainClass: String, val mainArgs: String, val jvmArgs: String,
-                       val systemProperties: Properties?, val startTime: Long) {
+                       val jitLoggingEnabled: Boolean, val systemProperties: Properties?, val startTime: Long) {
+    val processProperty = SimpleStringProperty(toString())
+    val enabledProperty = SimpleStringProperty(if (jitLoggingEnabled) "Can start profiling"
+                                            else "Cannot start profiling because jit logging wasn't enabled")
+
     override fun toString(): String {
         return "$mainClass ($pid)"
     }

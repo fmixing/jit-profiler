@@ -56,6 +56,11 @@ public class DeoptimizationEvent
         return tagAttributes.get(ATTR_COMMENT);
     }
 
+    public String getCount()
+    {
+        return tagAttributes.get(ATTR_COUNT);
+    }
+
     public List<IMetaMember> getDeoptimizationChain() {
         return deoptimizationChain;
     }

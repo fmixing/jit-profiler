@@ -12,21 +12,29 @@ import tornadofx.*
 import kotlin.math.*
 
 
-class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): View("Detailed info") {
+class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
+                             private val fromFilter: Long?,
+                             private val toFilter: Long?): View("Detailed info${filterInfo(fromFilter, toFilter)}") {
     private val deoptimizationInfoValues = FXCollections.observableArrayList(getDeoptimizationInfo(jitProfilingInfo))
     private val compileTrees = jitProfilingInfo.compileTrees
-    private val inlineIntoValues = FXCollections.observableArrayList(jitProfilingInfo.inlinedInto)
     private val maxLabelWidth = 667.0
+    private val inlineIntoValues = FXCollections.observableArrayList(jitProfilingInfo.inlinedInto
+            .filter { it.inlinedIntoCompilationTimestamp in from..to })
     private lateinit var inlinedInfoTabPane: TabPane
+    private val from = fromFilter ?: Long.MIN_VALUE
+    private val to = toFilter ?: Long.MAX_VALUE
 
     override val root = vbox {
         hbox {
             label {
+                val from = fromFilter ?: Long.MIN_VALUE
+                val to = toFilter ?: Long.MAX_VALUE
                 text = "Method name: ${jitProfilingInfo.fullMethodName}\n" +
-                        "Total compilation time (ms): ${jitProfilingInfo.totalCompilationTime}\n" +
-                        "Decompilations: ${jitProfilingInfo.decompilationCount}\n" +
-                        "Current native size: ${jitProfilingInfo.currentNativeSize}\n" +
-                        "Bytecode size: ${jitProfilingInfo.currentBytecodeSize}"
+                       "Total compilation time (ms): ${jitProfilingInfo.totalCompilationTimeFromTo(from, to)}\n" +
+                       "Compilations: ${jitProfilingInfo.compilationCountFromTo(from, to)}\n" +
+                       "Decompilations: ${jitProfilingInfo.decompilationCountFromTo(from, to)}\n" +
+                       "Current native size: ${jitProfilingInfo.currentNativeSizeAtTimestamp(to)}\n" +
+                       "Bytecode size: ${jitProfilingInfo.bytecodeSize}"
                 padding = Insets(10.0, 10.0, 10.0, 10.0)
                 val textWidth = Text(text).layoutBounds.width + 20.0
                 prefWidth = min(maxLabelWidth, textWidth)
@@ -40,6 +48,7 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
                 }
                 tableview(SimpleListProperty(deoptimizationInfoValues)) {
                     column("# of compilation", DeoptimizationInfo::compilationIndexProperty)
+                    column("Count", DeoptimizationInfo::countProperty)
                     column("Compiler", DeoptimizationInfo::compilerProperty)
                     column("Reason", DeoptimizationInfo::reasonProperty)
                     column("Action", DeoptimizationInfo::actionProperty)
@@ -71,13 +80,15 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
         inlinedInfoTabPane = tabpane {
             for (node in compileTrees) {
                 val compilation = node.compilation
-                tab(compilation.signature + ", " + compilation.compilationDuration + "ms") {
-                    hbox {
-                        add(buildInlineTree(node))
-                        label(graphic = getColorKeys()) {
-                            padding = Insets(10.0, 10.0, 10.0, 10.0)
-                            maxWidth = Text(InlinedInfoKey.values().map { it.keyName() }.joinToString("\n"))
-                                    .layoutBounds.width + 20.0
+                if (node.compilation.stampNMethodEmitted in from..to) {
+                    tab(compilation.signature + ", " + compilation.compilationDuration + "ms") {
+                        hbox {
+                            add(buildInlineTree(node))
+                            label(graphic = getColorKeys()) {
+                                padding = Insets(10.0, 10.0, 10.0, 10.0)
+                                maxWidth = Text(InlinedInfoKey.values().joinToString("\n") { it.keyName() })
+                                        .layoutBounds.width + 20.0
+                            }
                         }
                     }
                 }
@@ -159,7 +170,8 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
             hgrow = Priority.ALWAYS
             vgrow = Priority.ALWAYS
             rowFactory = createDoubleClickHandlerRowFactory({ TableRow<InlineIntoInfo>() },
-                                                            { DetailedMethodInfoView(it.caller).openWindow() })
+                                                            { DetailedMethodInfoView(it.caller, fromFilter, toFilter)
+                                                                    .openWindow() })
             columnResizePolicy = SmartResize.POLICY
         }
     }
@@ -192,6 +204,13 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo): Vi
     }
 }
 
+fun filterInfo(fromFilter: Long?, toFilter: Long?): String {
+    if (fromFilter == null && toFilter == null) return ""
+    val from = if (fromFilter != null) " from ${fromFilter / 1000.0}" else ""
+    val to = if (toFilter != null) " to ${toFilter / 1000.0}" else ""
+    return ", filtered$from$to"
+}
+
 fun getCompileTrees(jitProfilingInfo: JitProfilingInfo): List<CompileNode> {
     if (jitProfilingInfo.events.isEmpty()) return emptyList()
 
@@ -218,15 +237,19 @@ private fun getDeoptimizationInfo(jitProfilingInfo: JitProfilingInfo): List<Deop
         if (compilationDeoptimizations.isEmpty()) continue
         val compilerString = compilation.signature
         val index = compilation.index
-        deoptimizationInfos.addAll(compilationDeoptimizations.map { DeoptimizationInfo(index, compilerString, it.reason,
-                it.action, it.deoptimizationChain) })
+        deoptimizationInfos.addAll(compilationDeoptimizations.map { DeoptimizationInfo(it.stamp, index, it.count ?: "0",
+                compilerString,
+                it.reason, it.action, it.deoptimizationChain) })
+        println(deoptimizationInfos)
     }
     return deoptimizationInfos.toList().sortedWith(compareBy { it.compilationIndex } )
 }
 
-data class DeoptimizationInfo(val compilationIndex: Int, val compiler: String, val reason: String, val action: String,
+data class DeoptimizationInfo(val deoptimizationTimestamp: Long, val compilationIndex: Int, val count: String,
+                              val compiler: String, val reason: String, val action: String,
                               val deoptimizationChain: List<IMetaMember>) {
     val compilationIndexProperty = SimpleIntegerProperty(compilationIndex + 1)
+    val countProperty = SimpleStringProperty(count)
     val compilerProperty = SimpleStringProperty(compiler)
     val reasonProperty = SimpleStringProperty(reason)
     val actionProperty = SimpleStringProperty(action)
