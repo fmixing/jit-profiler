@@ -36,3 +36,8 @@ compileTestKotlin {
         jvmTarget = "11"
     }
 }
+
+task runJitLogProfiler(type : JavaExec) {
+    main = 'JitLogProfiler'
+    classpath sourceSets.main.runtimeClasspath
+}

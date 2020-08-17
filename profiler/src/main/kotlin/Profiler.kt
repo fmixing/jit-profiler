@@ -1,3 +1,5 @@
+@file:JvmName("JitLogProfiler")
+
 import javafx.scene.control.*
 import javafx.scene.layout.*
 import tornadofx.*
