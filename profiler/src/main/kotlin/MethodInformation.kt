@@ -15,6 +15,8 @@ import kotlin.math.*
 class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
                              private val fromFilter: Long?,
                              private val toFilter: Long?): View("Detailed info${filterInfo(fromFilter, toFilter)}") {
+    private val from = fromFilter ?: Long.MIN_VALUE
+    private val to = toFilter ?: Long.MAX_VALUE
     private val deoptimizationInfoValues = FXCollections.observableArrayList(getDeoptimizationInfo(jitProfilingInfo)
             .filter { it.deoptimizationTimestamp in from..to })
     private val compileTrees = jitProfilingInfo.compileTrees
@@ -22,8 +24,6 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
     private val inlineIntoValues = FXCollections.observableArrayList(jitProfilingInfo.inlinedInto
             .filter { it.inlinedIntoCompilationTimestamp in from..to })
     private lateinit var inlinedInfoTabPane: TabPane
-    private val from = fromFilter ?: Long.MIN_VALUE
-    private val to = toFilter ?: Long.MAX_VALUE
 
     override val root = vbox {
         hbox {
