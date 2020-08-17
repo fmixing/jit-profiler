@@ -4,3 +4,5 @@
 /jitwatch.out
 /jitwatch.properties
 
+/jitwatch/build/
+/profiler/build/
