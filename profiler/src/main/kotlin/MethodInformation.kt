@@ -15,7 +15,8 @@ import kotlin.math.*
 class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
                              private val fromFilter: Long?,
                              private val toFilter: Long?): View("Detailed info${filterInfo(fromFilter, toFilter)}") {
-    private val deoptimizationInfoValues = FXCollections.observableArrayList(getDeoptimizationInfo(jitProfilingInfo))
+    private val deoptimizationInfoValues = FXCollections.observableArrayList(getDeoptimizationInfo(jitProfilingInfo)
+            .filter { it.deoptimizationTimestamp in from..to })
     private val compileTrees = jitProfilingInfo.compileTrees
     private val maxLabelWidth = 667.0
     private val inlineIntoValues = FXCollections.observableArrayList(jitProfilingInfo.inlinedInto
@@ -26,20 +27,29 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
 
     override val root = vbox {
         hbox {
-            label {
-                val from = fromFilter ?: Long.MIN_VALUE
-                val to = toFilter ?: Long.MAX_VALUE
-                text = "Method name: ${jitProfilingInfo.fullMethodName}\n" +
-                       "Total compilation time (ms): ${jitProfilingInfo.totalCompilationTimeFromTo(from, to)}\n" +
-                       "Compilations: ${jitProfilingInfo.compilationCountFromTo(from, to)}\n" +
-                       "Decompilations: ${jitProfilingInfo.decompilationCountFromTo(from, to)}\n" +
-                       "Current native size: ${jitProfilingInfo.currentNativeSizeAtTimestamp(to)}\n" +
-                       "Bytecode size: ${jitProfilingInfo.bytecodeSize}"
-                padding = Insets(10.0, 10.0, 10.0, 10.0)
-                val textWidth = Text(text).layoutBounds.width + 20.0
-                prefWidth = min(maxLabelWidth, textWidth)
-                if (textWidth > prefWidth) {
-                    tooltip = Tooltip(jitProfilingInfo.fullMethodName)
+            vbox {
+                if (fromFilter != null && toFilter != null) {
+                    button("Show full info") {
+                        action {
+                            DetailedMethodInfoView(jitProfilingInfo, null, null).openWindow()
+                        }
+                    }
+                }
+                label {
+                    val from = fromFilter ?: Long.MIN_VALUE
+                    val to = toFilter ?: Long.MAX_VALUE
+                    text = "Method name: ${jitProfilingInfo.fullMethodName}\n" +
+                            "Total compilation time (ms): ${jitProfilingInfo.totalCompilationTimeFromTo(from, to)}\n" +
+                            "Compilations: ${jitProfilingInfo.compilationCountFromTo(from, to)}\n" +
+                            "Decompilations: ${jitProfilingInfo.decompilationCountFromTo(from, to)}\n" +
+                            "Current native size: ${jitProfilingInfo.currentNativeSizeAtTimestamp(to)}\n" +
+                            "Bytecode size: ${jitProfilingInfo.bytecodeSize}"
+                    padding = Insets(10.0, 10.0, 10.0, 10.0)
+                    val textWidth = Text(text).layoutBounds.width + 20.0
+                    prefWidth = min(maxLabelWidth, textWidth)
+                    if (textWidth > prefWidth) {
+                        tooltip = Tooltip(jitProfilingInfo.fullMethodName)
+                    }
                 }
             }
             vbox {
@@ -238,9 +248,7 @@ private fun getDeoptimizationInfo(jitProfilingInfo: JitProfilingInfo): List<Deop
         val compilerString = compilation.signature
         val index = compilation.index
         deoptimizationInfos.addAll(compilationDeoptimizations.map { DeoptimizationInfo(it.stamp, index, it.count ?: "0",
-                compilerString,
-                it.reason, it.action, it.deoptimizationChain) })
-        println(deoptimizationInfos)
+                compilerString, it.reason, it.action, it.deoptimizationChain) })
     }
     return deoptimizationInfos.toList().sortedWith(compareBy { it.compilationIndex } )
 }
