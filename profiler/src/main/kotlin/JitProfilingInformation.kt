@@ -164,7 +164,7 @@ class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
         fromField = getStampTextField(profilingInfoFrom)
         label {
             text = "to"
-            padding = Insets(5.0, 10.0, 0.0, 10.0)
+            padding = Insets(5.0, 10.0, 0.0, 0.0)
         }
         toField = getStampTextField(profilingInfoTo)
         button("Filter") {
@@ -181,7 +181,7 @@ class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
     }
 
     private fun HBox.getStampTextField(stamp: SimpleObjectProperty<Long>): TextField {
-        return textfield {
+        val textfield = textfield {
             filterInput { it.controlNewText.isDouble() }
             prefWidth = 100.0
             promptText = "123.456"
@@ -196,6 +196,11 @@ class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
                 }
             }
         }
+        label {
+            text = "sec"
+            padding = Insets(5.0, 10.0, 0.0, 2.5)
+        }
+        return textfield
     }
 
     private fun getExecutor() = ThreadPoolExecutor(1, Integer.MAX_VALUE, 60L, TimeUnit.SECONDS,
