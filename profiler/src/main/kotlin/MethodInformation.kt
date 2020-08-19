@@ -76,6 +76,8 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
         }
         vbox {
             createCompilationsSection()
+            hgrow = Priority.ALWAYS
+            vgrow = Priority.ALWAYS
         }
     }
 
@@ -108,6 +110,8 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
             }
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
             prefHeight = 376.0
+            hgrow = Priority.ALWAYS
+            vgrow = Priority.ALWAYS
         }
     }
 
