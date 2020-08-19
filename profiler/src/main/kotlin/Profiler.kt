@@ -15,13 +15,17 @@ class PV: View("Profiler") {
 
     override val root = vbox {
         tabpane {
-            val view = JitProfilingInformationNode()
-            profilerView = view
+            val packagingView = PackagingInformationNode()
+            val jitProfilingView = JitProfilingInformationNode(packagingView)
+            profilerView = jitProfilingView
             tab("Scan processes") {
-                content = ProcessAnalyserView(view).root
+                content = ProcessAnalyserView(jitProfilingView).root
             }
             tab("Profiling information") {
-                content = view.root
+                content = jitProfilingView.root
+            }
+            tab("Packaging information") {
+                content = packagingView.root
             }
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
             hgrow = Priority.ALWAYS
