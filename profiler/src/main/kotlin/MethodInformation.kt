@@ -68,6 +68,7 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
                     vgrow = Priority.ALWAYS
                     rowFactory = createDoubleClickHandlerRowFactory({ TableRow<DeoptimizationInfo>() },
                             { showPathToDeoptimizationReason(it) })
+                    tooltip = Tooltip("Tap twice to see deoptimization chain")
                 }
                 alignment = Pos.CENTER
                 hgrow = Priority.ALWAYS
@@ -136,8 +137,41 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
 
     private fun showPathToDeoptimizationReason(deoptimizationInfo: DeoptimizationInfo) {
         inlinedInfoTabPane.selectionModel.select(deoptimizationInfo.compilationIndex)
-        val deoptimizationChain = deoptimizationInfo.deoptimizationChain.joinToString(" ->\n") { getSignature(it) }
-        information("Deoptimization chain", deoptimizationChain)
+        if (deoptimizationInfo.deoptimizationChain.isEmpty()) return
+        @Suppress("UNCHECKED_CAST")
+        val treeView = inlinedInfoTabPane.selectionModel.selectedItem.content.getChildList()!![0] as TreeView<CompileNode>
+        val root = treeView.root
+        expandTreeView(root, false)
+        dfs(0, deoptimizationInfo.deoptimizationChain, root)
+    }
+
+    private fun expandTreeView(item: TreeItem<CompileNode>?, expand: Boolean) {
+        if (item != null && !item.isLeaf) {
+            item.isExpanded = expand
+            for (child in item.children) {
+                expandTreeView(child, expand)
+            }
+        }
+    }
+
+    private fun dfs(pathId: Int, path: List<IMetaMember>, treeItem: TreeItem<CompileNode>): Boolean {
+        check(path.size > pathId)
+        var found = false
+        for (tree in treeItem.children) {
+            if (tree.value.member != path[pathId]) {
+                continue
+            }
+            if (pathId + 1 == path.size) {
+                found = true
+                tree.isExpanded = true
+                continue
+            }
+            found = found || dfs(pathId + 1, path, tree)
+        }
+        if (found) {
+            treeItem.isExpanded = true
+        }
+        return found
     }
 
     private fun factory(root: CompileNode): Callback<TreeView<CompileNode>, TreeCell<CompileNode>> = Callback {
@@ -223,19 +257,6 @@ fun filterInfo(fromFilter: Long?, toFilter: Long?): String {
     val from = if (fromFilter != null) " from ${fromFilter / 1000.0}" else ""
     val to = if (toFilter != null) " to ${toFilter / 1000.0}" else ""
     return ", filtered$from$to"
-}
-
-fun getCompileTrees(jitProfilingInfo: JitProfilingInfo): List<CompileNode> {
-    if (jitProfilingInfo.events.isEmpty()) return emptyList()
-
-    val compileChainWalker = CompileChainWalker(jitProfilingInfo.model)
-    val compilations = jitProfilingInfo.events[0].eventMember.compilations
-    val compileTrees = ArrayList<CompileNode>()
-    for (compilation in compilations) {
-        val callTree = compileChainWalker.buildCallTree(compilation)
-        if (callTree != null) compileTrees += callTree
-    }
-    return compileTrees
 }
 
 private fun getDeoptimizationInfo(jitProfilingInfo: JitProfilingInfo): List<DeoptimizationInfo> {

@@ -329,30 +329,50 @@ private fun createJitProfilingInfo(name: String, eventMember: IMetaMember, event
 }
 
 private fun fillInlinedIntoInfo(map: HashMap<String, MutableList<JITEvent>>, nameToInfo: HashMap<String, JitProfilingInfo>) {
-    val inlinedIntoForMethod = HashMap<String, TreeSet<InlineIntoInfo>>()
+    val inlinedIntoForMethodMap = HashMap<String, TreeSet<InlineIntoInfo>>()
     for (name in map.keys) {
-        val jitProfilingInfo = nameToInfo[name]!!
-        val compileTree = getCompileTrees(jitProfilingInfo)
-        for (tree in compileTree) {
-            val compilation = tree.compilation.signature
-            for (child in tree.children) {
-                if (child == null || child.member == null || !child.isInlined) continue
-                var sortInlineInto = compareBy<InlineIntoInfo> { it.caller.fullMethodName }
-                sortInlineInto = sortInlineInto.thenBy { it.compilation }
-                val orElse = inlinedIntoForMethod.getOrPut(getSignature(child.member)) { TreeSet(sortInlineInto) }
-                val reason = child.tooltipText?.split(S_NEWLINE)?.filter { it.startsWith("Inlined") }
-                        ?.map { it.split(", ")[1] }?.first() ?: "Unknown"
-                orElse += InlineIntoInfo(jitProfilingInfo, tree.compilation.stampNMethodEmitted, compilation, reason)
-            }
-        }
-        jitProfilingInfo.compileTrees = compileTree
+        val method = nameToInfo[name]!!
+        val compileTrees = getCompileTrees(method)
+        fillInlinedIntoMethod(method, compileTrees, inlinedIntoForMethodMap)
+        method.compileTrees = compileTrees
     }
     for (name in map.keys) {
         val jitProfilingInfo = nameToInfo[name]!!
-        val orEmpty = inlinedIntoForMethod[name].orEmpty()
+        val orEmpty = inlinedIntoForMethodMap[name].orEmpty()
         jitProfilingInfo.inlinedInto = orEmpty.toList()
         jitProfilingInfo.inlineIntoCountProperty.set(orEmpty.size)
     }
+}
+
+private fun fillInlinedIntoMethod(method: JitProfilingInfo,
+                                  methodCompileTrees: List<CompileNode>,
+                                  inlinedIntoForMethodMap: HashMap<String, TreeSet<InlineIntoInfo>>) {
+    for (tree in methodCompileTrees) {
+        val compilation = tree.compilation.signature
+        for (child in tree.children) {
+            if (child == null || child.member == null || !child.isInlined) continue
+            val sortInlineInto = compareBy<InlineIntoInfo> { it.caller.fullMethodName }.thenBy { it.compilation }
+            val inlinedInto = inlinedIntoForMethodMap.getOrPut(getSignature(child.member)) { TreeSet(sortInlineInto) }
+            val reason = child.getInlinedReason()
+            inlinedInto += InlineIntoInfo(method, tree.compilation.stampNMethodEmitted, compilation, reason)
+        }
+    }
+}
+
+private fun CompileNode.getInlinedReason() = this.tooltipText?.split(S_NEWLINE)?.filter { it.startsWith("Inlined") }
+                ?.map { it.split(", ")[1] }?.first() ?: "Unknown"
+
+fun getCompileTrees(jitProfilingInfo: JitProfilingInfo): List<CompileNode> {
+    if (jitProfilingInfo.events.isEmpty()) return emptyList()
+
+    val compileChainWalker = CompileChainWalker(jitProfilingInfo.model)
+    val compilations = jitProfilingInfo.events[0].eventMember.compilations
+    val compileTrees = ArrayList<CompileNode>()
+    for (compilation in compilations) {
+        val callTree = compileChainWalker.buildCallTree(compilation)
+        if (callTree != null) compileTrees += callTree
+    }
+    return compileTrees
 }
 
 data class InlineIntoInfo(val caller: JitProfilingInfo, val inlinedIntoCompilationTimestamp: Long, val compilation: String,
