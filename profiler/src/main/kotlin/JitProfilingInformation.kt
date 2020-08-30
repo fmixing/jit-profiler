@@ -30,7 +30,7 @@ interface JitProfilingInformationExtractor {
     fun startProfiling(file: File)
 }
 
-class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
+class JitProfilingInformationNode(val packagingNode: PackagingInformationNode) : JitProfilingInformationExtractor, Parent() {
     private lateinit var profilingInfo: List<JitProfilingInfo>
     private val selectedProcessInfo = SimpleObjectProperty<File>()
     private val values = FXCollections.observableArrayList<JitProfilingInfo>()
@@ -98,6 +98,7 @@ class JitProfilingInformationNode : JitProfilingInformationExtractor, Parent() {
                 setOnSucceeded {
                     profilingInfo = value
                     values.setAll(value)
+                    packagingNode.setJitProfilingInfos(value)
                     filterJitProfilingInfo()
                     profilingIndicator.isVisible = false
                     profileCompleted.set(true)
