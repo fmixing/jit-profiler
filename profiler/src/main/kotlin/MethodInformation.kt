@@ -187,11 +187,11 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
                         tooltip = null
                     }
                     treeItem.value == root -> {
-                        text = if (item!!.member == null) "Unknown" else getSignature(item.member)
+                        text = if (item!!.member == null) getInfoWhenMemberAbsent(item) else getSignature(item.member)
                         tooltip = Tooltip("Root node\n${getNativeSizeInfo(root)}")
                     }
                     else -> {
-                        text = if (item!!.member == null) "Unknown" else getSignature(item.member)
+                        text = if (item!!.member == null) getInfoWhenMemberAbsent(item) else getSignature(item.member)
                         tooltip = Tooltip(item.tooltipText)
                     }
                 }
@@ -199,6 +199,12 @@ class DetailedMethodInfoView(private val jitProfilingInfo: JitProfilingInfo,
 
             private fun getNativeSizeInfo(node: CompileNode) = "Final native size: " + (node.compilation?.nativeSize ?: "unknown")
         }
+    }
+
+    private fun getInfoWhenMemberAbsent(node: CompileNode): String {
+        val prefix = if (node.isVirtualCall) "Virtual call for " else ""
+        val suffix = if (node.holder != null && node.methodName != null) "${node.holder}#${node.methodName}" else "Unknown"
+        return "$prefix$suffix"
     }
 
     private fun getColorKeys(): TextFlow = textflow {

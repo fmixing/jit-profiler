@@ -17,6 +17,8 @@ import org.adoptopenjdk.jitwatch.model.IParseDictionary;
 import org.adoptopenjdk.jitwatch.model.IReadOnlyJITDataModel;
 import org.adoptopenjdk.jitwatch.model.LogParseException;
 import org.adoptopenjdk.jitwatch.model.Tag;
+import org.adoptopenjdk.jitwatch.util.ParseUtil;
+import org.adoptopenjdk.jitwatch.util.StringUtil;
 import org.adoptopenjdk.jitwatch.util.TooltipUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -223,7 +225,10 @@ public class CompileChainWalker extends AbstractCompilationVisitable
 		childNode.setInlined(inlined);
 		childNode.setVirtualCall(virtualCall);
 		childNode.setTooltipText(tooltip);
-		
+		// just for the sake of the correct method information in a call tree
+		childNode.setHolder(ParseUtil.lookupType(methodAttrs.get(ATTR_HOLDER), parseDictionary));
+		childNode.setMethodName(StringUtil.replaceXMLEntities(methodAttrs.get(ATTR_NAME)));
+
 		return childNode;
 	}
 

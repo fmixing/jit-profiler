@@ -35,6 +35,10 @@ public class CompileNode
 	private IReadOnlyJITDataModel model;
 
 	private Compilation compilation;
+
+	private String holder;
+
+	private String methodName;
 	
 	public static CompileNode createRootNode(Compilation compilation, String methodID, IParseDictionary parseDictionary, IReadOnlyJITDataModel model)
 	{
@@ -158,6 +162,26 @@ public class CompileNode
 		CompileNode root = getRoot();
 		
 		return ParseUtil.getMethodName(methodID, root.parseDictionary);
+	}
+
+	public String getHolder()
+	{
+		return holder;
+	}
+
+	public void setHolder(String holder)
+	{
+		this.holder = holder;
+	}
+
+	public String getMethodName()
+	{
+		return methodName;
+	}
+
+	public void setMethodName(String methodName)
+	{
+		this.methodName = methodName;
 	}
 
 	private void show(CompileNode node, StringBuilder builder, int depth)
