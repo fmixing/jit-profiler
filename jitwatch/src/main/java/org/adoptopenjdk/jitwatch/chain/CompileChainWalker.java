@@ -5,35 +5,10 @@
  */
 package org.adoptopenjdk.jitwatch.chain;
 
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.ATTR_ID;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.ATTR_METHOD;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.ATTR_NAME;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.ATTR_REASON;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.S_PARSE_HIR;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_BC;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_BRANCH;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_CALL;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_DEPENDENCY;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_DIRECT_CALL;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_INLINE_FAIL;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_INLINE_SUCCESS;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_KLASS;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_METHOD;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_PARSE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_PARSE_DONE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_PHASE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_PHASE_DONE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_PREDICTED_CALL;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_TYPE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_UNCOMMON_TRAP;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_INTRINSIC;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_OBSERVE;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_HOT_THROW;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_VIRTUAL_CALL;
-import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.TAG_CAST_UP;
-
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 import org.adoptopenjdk.jitwatch.compilation.AbstractCompilationVisitable;
 import org.adoptopenjdk.jitwatch.compilation.CompilationUtil;
@@ -45,6 +20,8 @@ import org.adoptopenjdk.jitwatch.model.Tag;
 import org.adoptopenjdk.jitwatch.util.TooltipUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static org.adoptopenjdk.jitwatch.core.JITWatchConstants.*;
 
 public class CompileChainWalker extends AbstractCompilationVisitable
 {
@@ -99,7 +76,10 @@ public class CompileChainWalker extends AbstractCompilationVisitable
 		String methodID = null;
 		CompileNode lastNode = null;
 
+		Map<String, Map<String, String>> methodIDToNameAndHolder = new HashMap<>();
+		String methodAttrsMethodID = null;
 		Map<String, String> methodAttrs = new HashMap<>();
+		String callAttrsMethodID = null;
 		Map<String, String> callAttrs = new HashMap<>();
 
 		for (Tag child : parseTag.getChildren())
@@ -109,90 +89,126 @@ public class CompileChainWalker extends AbstractCompilationVisitable
 
 			switch (tagName)
 			{
-			case TAG_BC:
-			{
-				callAttrs.clear();
-				break;
-			}
-
-			case TAG_METHOD:
-			{
-				methodID = tagAttrs.get(ATTR_ID);
-				methodAttrs.clear();
-				methodAttrs.putAll(tagAttrs);
-				break;
-			}
-
-			case TAG_CALL:
-			{
-				methodID = tagAttrs.get(ATTR_METHOD);
-				callAttrs.clear();
-				callAttrs.putAll(tagAttrs);
-				break;
-			}
-
-			case TAG_INLINE_FAIL:
-			{
-				createChildNode(parentNode, methodID, parseDictionary, false, false, methodAttrs, callAttrs, tagAttrs);
-				methodID = null;
-				lastNode = null;
-				break;
-			}
-
-			case TAG_INLINE_SUCCESS:
-			{
-				lastNode = createChildNode(parentNode, methodID, parseDictionary, true, false, methodAttrs, callAttrs, tagAttrs);
-				break;
-			}
-
-			case TAG_PARSE: // call depth
-			{
-				String childMethodID = tagAttrs.get(ATTR_METHOD);
-
-				CompileNode nextParent = parentNode;
-
-				if (lastNode != null)
+				case TAG_BC:
 				{
-					nextParent = lastNode;
-				}
-				else if (child.getNamedChildren(TAG_PARSE).size() > 0)
-				{
-					CompileNode childNode = new CompileNode(childMethodID);
-
-					parentNode.addChild(childNode);
-
-					nextParent = childNode;
+					callAttrs.clear();
+					callAttrsMethodID = null;
+					break;
 				}
 
-				processParseTag(child, nextParent, parseDictionary);
-				
-				break;
-			}
-				
-			case TAG_PHASE:
-			{
-				String phaseName = tagAttrs.get(ATTR_NAME);
-				
-				if (S_PARSE_HIR.equals(phaseName))
+				case TAG_METHOD:
 				{
-					processParseTag(child, parentNode, parseDictionary);
+					methodID = tagAttrs.get(ATTR_ID);
+					methodIDToNameAndHolder.put(methodID, Map.of(ATTR_HOLDER, tagAttrs.get(ATTR_HOLDER), ATTR_NAME, tagAttrs.get(ATTR_NAME)));
+					methodAttrs.clear();
+					methodAttrs.putAll(tagAttrs);
+					methodAttrsMethodID = methodID;
+					break;
 				}
-				else
-				{
-					logger.warn("Don't know how to handle phase {}", phaseName);
-				}
-				break;
-			}
-			
-			case TAG_VIRTUAL_CALL:
-				lastNode = createChildNode(parentNode, methodID, parseDictionary, false, true, methodAttrs, callAttrs, tagAttrs);
-				break;
 
-			default:
-				handleOther(child);
-				break;
+				case TAG_CALL:
+				{
+					methodID = tagAttrs.get(ATTR_METHOD);
+					callAttrs.clear();
+					callAttrs.putAll(tagAttrs);
+					callAttrsMethodID = methodID;
+					break;
+				}
+
+				case TAG_INLINE_FAIL:
+				{
+					Map<String, String> correctMethodAttrs = getAttrsCorrectly(methodID, methodAttrsMethodID, methodAttrs,
+							methodIDToNameAndHolder.get(methodID));
+					Map<String, String> correctCallAttrs = getAttrsCorrectly(methodID, callAttrsMethodID, callAttrs);
+					createChildNode(parentNode, methodID, parseDictionary, false, false, correctMethodAttrs,
+							correctCallAttrs, tagAttrs);
+					methodID = null;
+					lastNode = null;
+					methodAttrsMethodID = null;
+					break;
+				}
+
+				case TAG_INLINE_SUCCESS:
+				{
+					Map<String, String> correctMethodAttrs = getAttrsCorrectly(methodID, methodAttrsMethodID, methodAttrs,
+							methodIDToNameAndHolder.get(methodID));
+					Map<String, String> correctCallAttrs = getAttrsCorrectly(methodID, callAttrsMethodID, callAttrs);
+					lastNode = createChildNode(parentNode, methodID, parseDictionary, true, false,
+							correctMethodAttrs, correctCallAttrs, tagAttrs);
+					break;
+				}
+
+				case TAG_PARSE: // call depth
+				{
+					String childMethodID = tagAttrs.get(ATTR_METHOD);
+
+					CompileNode nextParent = parentNode;
+
+					if (lastNode != null)
+					{
+						nextParent = lastNode;
+					}
+					else if (child.getNamedChildren(TAG_PARSE).size() > 0)
+					{
+						CompileNode childNode = new CompileNode(childMethodID);
+
+						parentNode.addChild(childNode);
+
+						nextParent = childNode;
+					}
+
+					processParseTag(child, nextParent, parseDictionary);
+
+					break;
+				}
+
+				case TAG_PHASE:
+				{
+					String phaseName = tagAttrs.get(ATTR_NAME);
+
+					if (S_PARSE_HIR.equals(phaseName))
+					{
+						processParseTag(child, parentNode, parseDictionary);
+					}
+					else
+					{
+						logger.warn("Don't know how to handle phase {}", phaseName);
+					}
+					break;
+				}
+
+				case TAG_VIRTUAL_CALL:
+					Map<String, String> correctMethodAttrs = getAttrsCorrectly(methodID, methodAttrsMethodID, methodAttrs,
+							methodIDToNameAndHolder.get(methodID));
+					Map<String, String> correctCallAttrs = getAttrsCorrectly(methodID, callAttrsMethodID, callAttrs);
+					lastNode = createChildNode(parentNode, methodID, parseDictionary, false, true,
+							correctMethodAttrs, correctCallAttrs, tagAttrs);
+					break;
+
+				default:
+					handleOther(child);
+					break;
 			}
 		}
+	}
+
+	private Map<String, String> getAttrsCorrectly(String currentMethodID, String attrsMethodID,
+														Map<String, String> attrs) {
+		return getAttrsCorrectly(currentMethodID, attrsMethodID, attrs, Collections.emptyMap());
+	}
+
+	/**
+	 * We need to make sure that we use the right attrs when building node information. For that reason, we need to check
+	 * if the methodID for attrs did not change.
+	 * @param currentMethodID methodID for the method we process right now
+	 * @param attrsMethodID known methodID when attrs were filled
+	 */
+	private Map<String, String> getAttrsCorrectly(String currentMethodID, String attrsMethodID, Map<String, String> attrs,
+												  Map<String, String> orElse) {
+		if (!Objects.equals(currentMethodID, attrsMethodID)) {
+			return (orElse != null) ? orElse : Collections.emptyMap();
+		}
+		return attrs;
 	}
 
 	private CompileNode createChildNode(CompileNode parentNode, String methodID, IParseDictionary parseDictionary, boolean inlined, boolean virtualCall,
